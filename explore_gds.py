@@ -272,6 +272,8 @@ def main():
     parser.add_argument("--hierarchy", action="store_true", help="Only print cell hierarchy tree")
     parser.add_argument("--export-layers", default=None, metavar="DIR",
                         help="Export each layer as a separate SVG to this directory")
+    parser.add_argument("--report", default=None, metavar="FILE",
+                        help="Save full report to a text file (e.g. report.txt)")
     args = parser.parse_args()
 
     lib = load_library(args.gds_file)
@@ -288,6 +290,27 @@ def main():
         if len(top) > 1:
             print(f"Note: multiple top-level cells found. Using '{cell.name}'.")
             print(f"  Use --cell to pick another: {[c.name for c in top]}")
+
+    # If --report, redirect stdout to both console and file
+    if args.report:
+        import io
+
+        class Tee:
+            """Write to both console and a file simultaneously."""
+            def __init__(self, filepath):
+                self.file = open(filepath, "w")
+                self.stdout = sys.stdout
+            def write(self, data):
+                self.stdout.write(data)
+                self.file.write(data)
+            def flush(self):
+                self.stdout.flush()
+                self.file.flush()
+            def close(self):
+                self.file.close()
+
+        tee = Tee(args.report)
+        sys.stdout = tee
 
     # Decide what to print
     show_all = not args.layers and not args.hierarchy and not args.export_layers
@@ -306,6 +329,11 @@ def main():
         export_layer_svgs(cell, args.export_layers)
 
     print("\nDone.")
+
+    if args.report:
+        sys.stdout = tee.stdout
+        tee.close()
+        print(f"Report saved to {args.report}")
 
 
 if __name__ == "__main__":
