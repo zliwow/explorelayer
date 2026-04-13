@@ -48,63 +48,57 @@ def load_config(config_path):
     return cfg
 
 
-def flatten_cell(lib, cell_name=None):
-    """
-    Return a flattened copy of the target cell.
-
-    Flattening resolves all nested references so every polygon is in
-    absolute top-level coordinates — required before overlap detection.
-    """
+def get_target_cell(lib, cell_name=None):
+    """Find the target cell by name, or return the top-level cell."""
     if cell_name:
-        cell = None
         for c in lib.cells:
             if c.name == cell_name:
-                cell = c
-                break
-        if cell is None:
-            print(f"Error: cell '{cell_name}' not found.")
-            sys.exit(1)
+                return c
+        print(f"Error: cell '{cell_name}' not found.")
+        sys.exit(1)
     else:
         top = lib.top_level()
         if not top:
             print("Error: no top-level cells found.")
             sys.exit(1)
-        cell = top[0]
         if len(top) > 1:
-            print(f"Note: using top-level cell '{cell.name}'")
-
-    flat = cell.copy(cell.name + "_flat_overlap")
-    flat.flatten()
-    return flat
+            print(f"Note: using top-level cell '{top[0].name}'")
+        return top[0]
 
 
-def extract_polygons_by_layer(flat_cell):
+def extract_polygons_for_layers(lib, cell, layers_of_interest):
     """
-    Extract all polygons from a flattened cell grouped by (layer, datatype).
+    Extract polygons only on the layers we care about, using gdstk's
+    built-in get_polygons() which handles flattening in C++ — much
+    faster than Python-side flatten + iterate for large files.
 
+    layers_of_interest: set of (layer, datatype) tuples.
     Returns dict: (layer, datatype) -> list of shapely Polygons.
     """
     layer_polys = defaultdict(list)
 
-    def add_poly(pts, layer, datatype):
-        if len(pts) < 3:
-            return
-        try:
-            sp = ShapelyPolygon(pts)
-            if not sp.is_valid:
-                sp = make_valid(sp)
-            if sp.is_empty or sp.area == 0:
-                return
-            layer_polys[(layer, datatype)].append(sp)
-        except Exception:
-            pass  # skip degenerate geometry
+    for ldt in layers_of_interest:
+        layer, datatype = ldt
+        print(f"  Extracting layer {layer}/{datatype} ...", end=" ")
 
-    for poly in flat_cell.polygons:
-        add_poly(poly.points, poly.layer, poly.datatype)
-
-    for path in flat_cell.paths:
-        for poly in path.to_polygons():
-            add_poly(poly.points, poly.layer, poly.datatype)
+        # gdstk get_polygons does hierarchical flattening in C++ per layer
+        raw_polys = cell.get_polygons(layer=layer, datatype=datatype)
+        count = 0
+        for gds_poly in raw_polys:
+            pts = gds_poly.points if isinstance(gds_poly, gdstk.Polygon) else gds_poly
+            if len(pts) < 3:
+                continue
+            try:
+                sp = ShapelyPolygon(pts)
+                if not sp.is_valid:
+                    sp = make_valid(sp)
+                if sp.is_empty or sp.area == 0:
+                    continue
+                layer_polys[ldt].append(sp)
+                count += 1
+            except Exception:
+                pass
+        print(f"{count} polygons")
 
     return dict(layer_polys)
 
@@ -213,17 +207,25 @@ def main():
     lib = gdstk.read_gds(args.gds_file)
     print(f"  Loaded in {time.time() - t0:.1f}s — {len(lib.cells)} cells")
 
-    # Flatten
-    print("Flattening cell hierarchy ...")
-    t0 = time.time()
-    flat = flatten_cell(lib, args.cell)
-    print(f"  Flattened in {time.time() - t0:.1f}s")
+    # Get target cell
+    cell = get_target_cell(lib, args.cell)
+    print(f"  Target cell: {cell.name}")
 
-    # Extract polygons
-    print("Extracting polygons by layer ...")
-    layer_polys = extract_polygons_by_layer(flat)
+    # Collect only the layers we need
+    layers_of_interest = set()
+    for ldt in cfg["pad_layers"]:
+        layers_of_interest.add(ldt)
+    for ldt in cfg["rdl_layers"]:
+        layers_of_interest.add(ldt)
+    for cl in cfg["check_layers"]:
+        layers_of_interest.add(cl["layer"])
+
+    # Extract polygons (per-layer C++ flattening — no full flatten needed)
+    print(f"Extracting polygons for {len(layers_of_interest)} layers of interest ...")
+    t0 = time.time()
+    layer_polys = extract_polygons_for_layers(lib, cell, layers_of_interest)
     total = sum(len(v) for v in layer_polys.values())
-    print(f"  {total} polygons across {len(layer_polys)} layer/datatype pairs")
+    print(f"  {total} polygons extracted in {time.time() - t0:.1f}s")
 
     # Detect overlaps
     print("Detecting overlaps ...")
@@ -234,7 +236,7 @@ def main():
     # Build result payload
     result = {
         "gds_file": os.path.basename(args.gds_file),
-        "cell": flat.name.replace("_flat_overlap", ""),
+        "cell": cell.name,
         "config": {
             "pad_layers": [list(l) for l in cfg["pad_layers"]],
             "rdl_layers": [list(l) for l in cfg["rdl_layers"]],

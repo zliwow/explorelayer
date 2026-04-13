@@ -22,7 +22,6 @@ import gdstk
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.collections import PatchCollection
-from shapely.geometry import Polygon as ShapelyPolygon
 
 
 def load_library(gds_path):
@@ -77,55 +76,79 @@ def print_summary(lib, cell):
 
 # ── Layer summary ────────────────────────────────────────────────────────────
 
-def collect_layer_stats(cell, flatten=True):
+def collect_layer_stats(lib, cell):
     """
-    Collect per-layer polygon count and total area.
+    Collect per-layer polygon count and total area by walking the cell
+    hierarchy WITHOUT flattening.
 
-    If flatten=True the cell is flattened first so nested geometries are
-    included. Returns dict keyed by (layer, datatype).
+    Each unique sub-cell is counted once, then multiplied by how many
+    times it's instantiated. This is orders of magnitude faster than
+    flattening a large design. Uses gdstk's native C++ area() method
+    instead of shapely.
+
+    Returns dict keyed by (layer, datatype).
     """
-    if flatten:
-        # Work on a copy so we don't mutate the original
-        flat = cell.copy(cell.name + "_flat")
-        flat.flatten()
-    else:
-        flat = cell
+    # Step 1: compute per-cell, per-layer stats (polygons directly in that cell)
+    cell_stats = {}  # cell_name -> {(layer, dt): {"count": N, "area": F}}
 
-    stats = defaultdict(lambda: {"count": 0, "area": 0.0})
+    all_cells = {c.name: c for c in lib.cells}
+    total_cells = len(all_cells)
+    print(f"  Scanning {total_cells} cells for layer stats ...")
 
-    for poly in flat.polygons:
-        key = (poly.layer, poly.datatype)
-        stats[key]["count"] += 1
-        # Use shapely for robust area calculation
-        pts = poly.points
-        if len(pts) >= 3:
-            try:
-                sp = ShapelyPolygon(pts)
-                if sp.is_valid:
-                    stats[key]["area"] += sp.area
-            except Exception:
-                pass  # skip degenerate polygons
+    for i, (cname, c) in enumerate(all_cells.items()):
+        if (i + 1) % 500 == 0 or (i + 1) == total_cells:
+            print(f"    {i + 1}/{total_cells} cells scanned ...", end="\r")
 
-    # Also count polygons inside paths (gdstk paths are parameterized)
-    for path in flat.paths:
-        for poly in path.to_polygons():
+        local = defaultdict(lambda: {"count": 0, "area": 0.0})
+        for poly in c.polygons:
             key = (poly.layer, poly.datatype)
-            stats[key]["count"] += 1
-            pts = poly.points
-            if len(pts) >= 3:
-                try:
-                    sp = ShapelyPolygon(pts)
-                    if sp.is_valid:
-                        stats[key]["area"] += sp.area
-                except Exception:
-                    pass
+            local[key]["count"] += 1
+            local[key]["area"] += poly.area()
+        for path in c.paths:
+            for poly in path.to_polygons():
+                key = (poly.layer, poly.datatype)
+                local[key]["count"] += 1
+                local[key]["area"] += poly.area()
+        cell_stats[cname] = dict(local)
+
+    print()
+
+    # Step 2: walk hierarchy from the target cell, accumulating totals.
+    # Count how many times each cell appears (considering nested refs).
+    cell_instance_counts = defaultdict(int)
+    cell_instance_counts[cell.name] = 1
+
+    def count_instances(c, multiplier):
+        ref_counts = defaultdict(int)
+        for ref in c.references:
+            child_name = ref.cell.name if isinstance(ref.cell, gdstk.Cell) else ref.cell
+            # Arrays multiply instances
+            reps = 1
+            if ref.repetition is not None and ref.repetition.size > 0:
+                reps = ref.repetition.size
+            ref_counts[child_name] += reps
+        for child_name, cnt in ref_counts.items():
+            total = multiplier * cnt
+            cell_instance_counts[child_name] += total
+            if child_name in all_cells:
+                count_instances(all_cells[child_name], total)
+
+    print("  Walking hierarchy to count instances ...")
+    count_instances(cell, 1)
+
+    # Step 3: accumulate weighted stats
+    stats = defaultdict(lambda: {"count": 0, "area": 0.0})
+    for cname, mult in cell_instance_counts.items():
+        for key, s in cell_stats.get(cname, {}).items():
+            stats[key]["count"] += s["count"] * mult
+            stats[key]["area"] += s["area"] * mult
 
     return dict(stats)
 
 
-def print_layer_summary(cell):
+def print_layer_summary(lib, cell):
     """Print per-layer polygon count and area."""
-    stats = collect_layer_stats(cell, flatten=True)
+    stats = collect_layer_stats(lib, cell)
     if not stats:
         print("\n  (no polygons found)")
         return
@@ -273,7 +296,7 @@ def main():
         print_summary(lib, cell)
 
     if show_all or args.layers:
-        print_layer_summary(cell)
+        print_layer_summary(lib, cell)
 
     if show_all or args.hierarchy:
         print_hierarchy(cell)
