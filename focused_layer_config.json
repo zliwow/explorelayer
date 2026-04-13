@@ -1,0 +1,17 @@
+{
+  "pad_layers": [[72, 0]],
+  "rdl_layers": [],
+  "check_layers": [
+    {"layer": [171, 0], "name": "poly"},
+    {"layer": [6, 0], "name": "metal_6"},
+    {"layer": [7, 0], "name": "metal_7"},
+    {"layer": [10, 0], "name": "metal_10"},
+    {"layer": [12, 0], "name": "metal_12"},
+    {"layer": [13, 0], "name": "metal_13"},
+    {"layer": [14, 0], "name": "metal_14"},
+    {"layer": [28, 0], "name": "metal_28"},
+    {"layer": [31, 0], "name": "metal_31"},
+    {"layer": [42, 0], "name": "metal_42"}
+  ],
+  "min_overlap_area": 10.0
+}

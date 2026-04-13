@@ -3,10 +3,12 @@
 Report Generator — turn overlap detection JSON into human-readable
 markdown reports or LLM prompt payloads for risk assessment.
 
+Produces a CONDENSED summary grouped by pad region rather than
+listing every individual polygon overlap.
+
 Usage:
     python report_generator.py overlap_results.json --output report.md
     python report_generator.py overlap_results.json --llm-prompt > prompt.txt
-    python report_generator.py overlap_results.json --output report.md --llm-prompt > prompt.txt
 """
 
 import argparse
@@ -21,10 +23,88 @@ def load_results(path):
         return json.load(f)
 
 
+def group_findings(findings):
+    """
+    Group findings by region (using region_bounds as key), then by layer.
+    Returns a structured summary per pad/RDL region.
+    """
+    regions = defaultdict(lambda: {
+        "type": None,
+        "bounds": None,
+        "area": 0,
+        "layers": defaultdict(lambda: {
+            "count": 0,
+            "total_overlap_area": 0,
+            "max_overlap_area": 0,
+            "max_overlap_pct": 0,
+        })
+    })
+
+    for f in findings:
+        key = tuple(f["region_bounds"])
+        r = regions[key]
+        r["type"] = f["region_type"]
+        r["bounds"] = f["region_bounds"]
+        r["area"] = f["region_area"]
+
+        layer = f["check_layer"]
+        r["layers"][layer]["count"] += 1
+        r["layers"][layer]["total_overlap_area"] += f["overlap_area"]
+        r["layers"][layer]["max_overlap_area"] = max(
+            r["layers"][layer]["max_overlap_area"], f["overlap_area"])
+        r["layers"][layer]["max_overlap_pct"] = max(
+            r["layers"][layer]["max_overlap_pct"], f["overlap_pct_of_region"])
+
+    return dict(regions)
+
+
+def risk_score(region_summary):
+    """
+    Assign a risk level to a pad region based on what's under it.
+    Returns (level, score, reasons).
+    """
+    reasons = []
+    score = 0
+
+    for layer, stats in region_summary["layers"].items():
+        lname = layer.lower()
+
+        # Poly under pad is highest risk (reflow shift, stress cracking)
+        if "poly" in lname:
+            score += 40
+            reasons.append(f"POLY under pad: {stats['count']} structures, "
+                           f"{stats['total_overlap_area']:.1f} area")
+
+        # Active/diffusion under pad
+        elif "active" in lname or "diff" in lname:
+            score += 30
+            reasons.append(f"ACTIVE under pad: {stats['count']} structures")
+
+        # Metal routing — normal for lower metals, concerning for thin metals
+        elif "metal" in lname:
+            if stats["max_overlap_pct"] > 50:
+                score += 10
+                reasons.append(f"{layer}: large overlap ({stats['max_overlap_pct']:.0f}% of pad)")
+            elif stats["count"] > 100:
+                score += 5
+                reasons.append(f"{layer}: dense routing ({stats['count']} overlaps)")
+
+    if score >= 30:
+        level = "HIGH"
+    elif score >= 15:
+        level = "MEDIUM"
+    elif score > 0:
+        level = "LOW"
+    else:
+        level = "CLEAR"
+
+    return level, score, reasons
+
+
 # ── Markdown report ──────────────────────────────────────────────────────────
 
 def generate_markdown(data):
-    """Generate a human-readable markdown report from overlap findings."""
+    """Generate a condensed markdown report grouped by pad region."""
     lines = []
     lines.append(f"# GDS Overlap Report — {data['gds_file']}")
     lines.append(f"**Cell:** {data['cell']}\n")
@@ -38,7 +118,6 @@ def generate_markdown(data):
     lines.append(f"| Total overlaps found | {summary['total_overlaps']} |")
     lines.append("")
 
-    # Config info
     cfg = data["config"]
     lines.append("## Layer Configuration\n")
     lines.append(f"- **Pad layers:** {cfg['pad_layers']}")
@@ -51,37 +130,84 @@ def generate_markdown(data):
 
     if not data["findings"]:
         lines.append("## Findings\n")
-        lines.append("No overlaps detected. All pad/RDL regions are clear of check-layer geometries.\n")
+        lines.append("No overlaps detected.\n")
         return "\n".join(lines)
 
-    # Group findings by region type, then by check layer
-    by_type = defaultdict(lambda: defaultdict(list))
-    for f in data["findings"]:
-        by_type[f["region_type"]][f["check_layer"]].append(f)
+    # Group and score
+    grouped = group_findings(data["findings"])
 
-    for region_type in ["pad", "rdl"]:
-        if region_type not in by_type:
-            continue
-        label = "Pad" if region_type == "pad" else "RDL"
-        lines.append(f"## {label} Region Overlaps\n")
+    # Separate by region type
+    pad_regions = {k: v for k, v in grouped.items() if v["type"] == "pad"}
+    rdl_regions = {k: v for k, v in grouped.items() if v["type"] == "rdl"}
 
-        for layer_name, overlaps in sorted(by_type[region_type].items()):
-            lines.append(f"### Layer: {layer_name}\n")
-            lines.append(f"**{len(overlaps)} overlap(s) found**\n")
-            lines.append("| # | Region Bounds | Overlap Area | % of Region | % of Geometry | Geometry Bounds |")
-            lines.append("|---|---------------|-------------|-------------|---------------|-----------------|")
-            for i, ov in enumerate(overlaps, 1):
-                rb = ov["region_bounds"]
-                gb = ov["geometry_bounds"]
-                lines.append(
-                    f"| {i} "
-                    f"| ({rb[0]:.1f}, {rb[1]:.1f})..({rb[2]:.1f}, {rb[3]:.1f}) "
-                    f"| {ov['overlap_area']:.2f} "
-                    f"| {ov['overlap_pct_of_region']:.1f}% "
-                    f"| {ov['overlap_pct_of_geometry']:.1f}% "
-                    f"| ({gb[0]:.1f}, {gb[1]:.1f})..({gb[2]:.1f}, {gb[3]:.1f}) |"
-                )
+    # Score and sort pads by risk
+    scored_pads = []
+    for key, region in pad_regions.items():
+        level, score, reasons = risk_score(region)
+        scored_pads.append((key, region, level, score, reasons))
+    scored_pads.sort(key=lambda x: -x[3])
+
+    # Risk overview
+    risk_counts = defaultdict(int)
+    for _, _, level, _, _ in scored_pads:
+        risk_counts[level] += 1
+
+    lines.append("## Risk Overview\n")
+    lines.append(f"| Risk Level | Pad Count |")
+    lines.append(f"|------------|-----------|")
+    for level in ["HIGH", "MEDIUM", "LOW", "CLEAR"]:
+        if risk_counts[level] > 0:
+            lines.append(f"| {level} | {risk_counts[level]} |")
+    lines.append("")
+
+    # Detailed per-pad report (HIGH and MEDIUM only in detail, LOW/CLEAR summarized)
+    lines.append("## Pad Region Details\n")
+
+    for key, region, level, score, reasons in scored_pads:
+        if level in ("HIGH", "MEDIUM"):
+            b = region["bounds"]
+            lines.append(f"### Pad at ({b[0]:.0f}, {b[1]:.0f})..({b[2]:.0f}, {b[3]:.0f}) — **{level} RISK**\n")
+            lines.append(f"Pad area: {region['area']:.1f}\n")
+            lines.append("**Risk factors:**")
+            for r in reasons:
+                lines.append(f"- {r}")
             lines.append("")
+            lines.append("| Layer | Overlapping Geometries | Total Overlap Area | Max Single Overlap % |")
+            lines.append("|-------|----------------------|-------------------|---------------------|")
+            for layer, stats in sorted(region["layers"].items()):
+                lines.append(f"| {layer} | {stats['count']} | {stats['total_overlap_area']:.1f} "
+                             f"| {stats['max_overlap_pct']:.1f}% |")
+            lines.append("")
+
+    # Summary table for LOW/CLEAR pads
+    low_clear = [(k, r, l, s, rs) for k, r, l, s, rs in scored_pads if l in ("LOW", "CLEAR")]
+    if low_clear:
+        lines.append("### Low Risk / Clear Pads (summary)\n")
+        lines.append("| Pad Location | Risk | Layers Present | Total Overlaps |")
+        lines.append("|-------------|------|----------------|----------------|")
+        for key, region, level, score, reasons in low_clear:
+            b = region["bounds"]
+            layer_names = ", ".join(sorted(region["layers"].keys()))
+            total_overlaps = sum(s["count"] for s in region["layers"].values())
+            lines.append(f"| ({b[0]:.0f},{b[1]:.0f})..({b[2]:.0f},{b[3]:.0f}) "
+                         f"| {level} | {layer_names} | {total_overlaps} |")
+        lines.append("")
+
+    # RDL section (condensed)
+    if rdl_regions:
+        lines.append("## RDL Region Summary\n")
+        lines.append(f"**{len(rdl_regions)} RDL regions analyzed.**\n")
+        # Just aggregate stats
+        rdl_layer_totals = defaultdict(lambda: {"regions_affected": 0, "total_overlaps": 0})
+        for region in rdl_regions.values():
+            for layer, stats in region["layers"].items():
+                rdl_layer_totals[layer]["regions_affected"] += 1
+                rdl_layer_totals[layer]["total_overlaps"] += stats["count"]
+        lines.append("| Check Layer | RDL Regions Affected | Total Overlaps |")
+        lines.append("|-------------|---------------------|----------------|")
+        for layer, totals in sorted(rdl_layer_totals.items()):
+            lines.append(f"| {layer} | {totals['regions_affected']} | {totals['total_overlaps']} |")
+        lines.append("")
 
     lines.append("---\n*Generated by gds-layout-explorer*\n")
     return "\n".join(lines)
@@ -91,70 +217,65 @@ def generate_markdown(data):
 
 def generate_llm_prompt(data):
     """
-    Generate a structured prompt for an LLM to perform risk assessment
-    on the overlap findings.
+    Generate a condensed prompt for an LLM to assess risk.
+    Only includes HIGH and MEDIUM risk findings.
     """
     parts = []
 
     parts.append("You are an IC packaging and layout reliability expert. "
                   "Analyze the following overlap findings from a GDSII layout "
-                  "and assess the risk each one poses to packaging reliability.\n")
+                  "and assess the risk each one poses.\n")
 
     parts.append("## Context\n")
     parts.append(f"- **Chip:** {data['gds_file']} (cell: {data['cell']})")
+    parts.append(f"- **Total pad regions:** {data['summary']['total_pad_regions']}")
     parts.append(f"- **Total overlaps found:** {data['summary']['total_overlaps']}")
-    parts.append(f"- **Pad regions:** {data['summary']['total_pad_regions']}")
-    parts.append(f"- **RDL regions:** {data['summary']['total_rdl_regions']}")
     parts.append("")
 
-    parts.append("## Known Failure Modes to Consider\n")
-    parts.append("- **Solder reflow shift:** Structures under pads can shift ~1-5% "
-                  "during reflow. Poly resistors are especially sensitive.")
-    parts.append("- **Stress cracking:** Mechanical stress from ball bonding or "
-                  "thermal cycling can crack underlying dielectrics or poly.")
-    parts.append("- **Electromigration:** High current density paths under pads "
-                  "can accelerate electromigration failures.")
-    parts.append("- **Oxide cracking:** Probe marks and wire bonding can cause "
-                  "oxide damage that propagates to underlying structures.")
-    parts.append("- **Thermal mismatch:** CTE differences between bump materials "
-                  "and underlying layers create stress concentrations.")
+    parts.append("## Known IC Packaging Failure Modes\n")
+    parts.append("- **Solder reflow shift:** Structures under pads shift ~1-5% during reflow. Poly resistors especially sensitive.")
+    parts.append("- **Stress cracking:** Mechanical stress from bonding can crack underlying dielectrics or poly.")
+    parts.append("- **Electromigration:** High current paths under pads accelerate EM failures.")
+    parts.append("- **Oxide cracking:** Probe marks / wire bonding damage propagates to underlying structures.")
+    parts.append("- **Thermal mismatch:** CTE differences create stress concentrations.")
     parts.append("")
 
-    parts.append("## Overlap Findings\n")
+    # Group and score
+    grouped = group_findings(data["findings"])
+    pad_regions = {k: v for k, v in grouped.items() if v["type"] == "pad"}
 
-    if not data["findings"]:
-        parts.append("No overlaps were detected. All pad/RDL regions appear clear.")
+    scored = []
+    for key, region in pad_regions.items():
+        level, score, reasons = risk_score(region)
+        scored.append((key, region, level, score, reasons))
+    scored.sort(key=lambda x: -x[3])
+
+    # Only include concerning pads
+    concerning = [(k, r, l, s, rs) for k, r, l, s, rs in scored if l in ("HIGH", "MEDIUM")]
+
+    if not concerning:
+        parts.append("## Findings\n")
+        parts.append("No high or medium risk overlaps detected. All pads appear clear of sensitive structures.")
     else:
-        # Group by region type
-        by_type = defaultdict(list)
-        for f in data["findings"]:
-            by_type[f["region_type"]].append(f)
-
-        for region_type in ["pad", "rdl"]:
-            if region_type not in by_type:
-                continue
-            label = "PAD" if region_type == "pad" else "RDL"
-            parts.append(f"### {label} Region Overlaps\n")
-            for i, ov in enumerate(by_type[region_type], 1):
-                parts.append(f"**Finding {i}:**")
-                parts.append(f"  - Layer: {ov['check_layer']} ({ov['check_layer_number']})")
-                parts.append(f"  - Overlap area: {ov['overlap_area']}")
-                parts.append(f"  - Overlap as % of {region_type} region: {ov['overlap_pct_of_region']}%")
-                parts.append(f"  - Overlap as % of geometry: {ov['overlap_pct_of_geometry']}%")
-                parts.append(f"  - Region bounds: {ov['region_bounds']}")
-                parts.append(f"  - Geometry bounds: {ov['geometry_bounds']}")
-                parts.append("")
+        parts.append(f"## Findings ({len(concerning)} concerning pad regions)\n")
+        for i, (key, region, level, score, reasons) in enumerate(concerning, 1):
+            b = region["bounds"]
+            parts.append(f"### Pad {i} at ({b[0]:.0f},{b[1]:.0f})..({b[2]:.0f},{b[3]:.0f}) — {level} RISK\n")
+            parts.append(f"Pad area: {region['area']:.1f}")
+            parts.append("Structures found under this pad:")
+            for layer, stats in sorted(region["layers"].items()):
+                parts.append(f"  - {layer}: {stats['count']} geometries, "
+                             f"total overlap area {stats['total_overlap_area']:.1f}, "
+                             f"max single overlap {stats['max_overlap_pct']:.1f}% of pad")
+            parts.append("")
 
     parts.append("## Your Task\n")
-    parts.append("For each finding above:")
+    parts.append("For each flagged pad:")
     parts.append("1. Assign a **risk level**: HIGH, MEDIUM, or LOW")
-    parts.append("2. Explain **why** this overlap is or isn't concerning, "
-                  "referencing specific failure modes")
-    parts.append("3. Provide a **recommendation** (e.g., move the structure, "
-                  "add a keep-out zone, acceptable as-is, needs further analysis)")
+    parts.append("2. Explain **why** — reference specific failure modes")
+    parts.append("3. Provide a **recommendation** (move structure, add keep-out, acceptable, needs review)")
     parts.append("")
-    parts.append("Finally, provide an **overall assessment** of the layout's "
-                  "packaging risk and any general recommendations.")
+    parts.append("Provide an **overall assessment** and general recommendations.")
 
     return "\n".join(parts)
 
