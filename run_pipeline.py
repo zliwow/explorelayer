@@ -538,7 +538,24 @@ def query_llm(messages, url, model, max_tokens=8192):
 
     with urllib.request.urlopen(req, timeout=600) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-        return data["choices"][0]["message"]["content"]
+        # Handle different response formats from vLLM/SGLang
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError):
+            content = None
+
+        # SGLang with reasoning model may put response in 'reasoning_content'
+        if content is None:
+            try:
+                content = data["choices"][0]["message"].get("reasoning_content", "")
+            except (KeyError, IndexError):
+                pass
+
+        if content is None:
+            # Dump full response for debugging
+            content = f"(Could not parse LLM response. Raw: {json.dumps(data, indent=2)[:2000]})"
+
+        return content
 
 
 def detect_model(url):
