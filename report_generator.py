@@ -62,32 +62,51 @@ def risk_score(region_summary):
     """
     Assign a risk level to a pad region based on what's under it.
     Returns (level, score, reasons).
+
+    Scoring philosophy:
+      - Poly / active / diffusion under pad = real risk (gate oxide stress,
+        reflow shift of precision devices, cracking).
+      - Metal routing under pad = NORMAL in power IC layout. We record it
+        for context but do NOT score it as risk — otherwise every densely
+        routed pad trips HIGH which is a false alarm.
     """
     reasons = []
     score = 0
+    metal_layers_present = 0
+    total_metal_overlaps = 0
 
     for layer, stats in region_summary["layers"].items():
         lname = layer.lower()
 
-        # Poly under pad is highest risk (reflow shift, stress cracking)
+        # Poly under pad — reflow shift, gate-oxide stress cracking
         if "poly" in lname:
             score += 40
             reasons.append(f"POLY under pad: {stats['count']} structures, "
-                           f"{stats['total_overlap_area']:.1f} area")
+                           f"{stats['total_overlap_area']:.1f} area, "
+                           f"max {stats['max_overlap_pct']:.0f}% of pad")
 
-        # Active/diffusion under pad
-        elif "active" in lname or "diff" in lname:
+        # Active / diffusion / OD — precision device under pad
+        elif "active" in lname or "diff" in lname or lname.startswith("od"):
             score += 30
-            reasons.append(f"ACTIVE under pad: {stats['count']} structures")
+            reasons.append(f"ACTIVE under pad: {stats['count']} structures, "
+                           f"max {stats['max_overlap_pct']:.0f}% of pad")
 
-        # Metal routing — normal for lower metals, concerning for thin metals
+        # High-resistance poly resistors — these are the precision analog devices
+        elif "rpoly" in lname or "hires" in lname or "resistor" in lname:
+            score += 35
+            reasons.append(f"PRECISION RESISTOR under pad: {stats['count']} structures")
+
+        # Metal routing — NORMAL, count but don't score
         elif "metal" in lname:
-            if stats["max_overlap_pct"] > 50:
-                score += 10
-                reasons.append(f"{layer}: large overlap ({stats['max_overlap_pct']:.0f}% of pad)")
-            elif stats["count"] > 100:
-                score += 5
-                reasons.append(f"{layer}: dense routing ({stats['count']} overlaps)")
+            metal_layers_present += 1
+            total_metal_overlaps += stats["count"]
+
+    # Append metal summary as informational (not scored)
+    if metal_layers_present > 0:
+        reasons.append(
+            f"[info] Metal routing: {metal_layers_present} layers, "
+            f"{total_metal_overlaps} total overlaps — normal, not scored"
+        )
 
     if score >= 30:
         level = "HIGH"

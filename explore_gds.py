@@ -337,4 +337,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BrokenPipeError:
+        # Pipe closed early (e.g., `| head`). Silence the noisy traceback.
+        try:
+            sys.stdout.close()
+        except Exception:
+            pass
+        sys.exit(0)
