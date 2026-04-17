@@ -55,6 +55,15 @@ SEVERITY_PATTERNS = [
     (r"(?i)(^|_)(esdclamp|esd_clamp|clamp)(_|<|$)",
      "high",
      "ESD clamp device — unexpected overlap may affect discharge path"),
+    # Real ESD device cells follow patterns like 'esd3a_r0', 'esddiode_r1',
+    # 'esd_pmos_r2'. These are the actual device, not the chip-level wrapper
+    # (which is caught by the WRAPPER_PATTERNS rule for ESD_R<N> at end).
+    (r"(?i)^esd[a-z0-9]+_r\d+$",
+     "medium",
+     "ESD device cell — metal across the device can shift Vt1/It2 / discharge timing"),
+    (r"(?i)^(esddiode|esdpmos|esdnmos|esdscr|esdgrgnmos)",
+     "medium",
+     "named ESD device variant — confirm metal coverage is intentional"),
     (r"(?i)(^|_)(ldo|buck|boost|pfm|pwm|regulator)(_|<|$)",
      "medium",
      "regulator / power-conversion block — sensitive to thermal and metal coupling"),
@@ -76,7 +85,9 @@ SEVERITY_PATTERNS = [
 # wrapper or vendor IP and the polygons inside aren't actually analog-sensitive.
 WRAPPER_PATTERNS = [
     (r"(?i)package", "info", "chip-level package wrapper"),
-    (r"(?i)esd_r\d+$", "info", "chip-level ESD wrapper, not a real clamp"),
+    # Chip-level ESD wrapper: 'esd' as its own word, e.g. 'MPQ8897_ESD_R3'.
+    # Does NOT match 'esd3a_r0' (real device) — that one is glued.
+    (r"(?i)(^|_)esd_r\d+$", "info", "chip-level ESD wrapper, not a real clamp"),
     (r"(?i)top_r\d+$", "info", "chip-level top wrapper"),
     (r"(?i)(mem|sram|rom|ram|cell_flat|x[a-z0-9]*memory|xr[s]?\d+[a-z0-9]+)",
      "low",
@@ -91,8 +102,23 @@ def _path_segments(path_str):
 
 
 def _is_wrapper(segment):
-    """True if this segment is a chip-level wrapper (package/top/ESD wrapper)."""
-    return bool(re.search(r"(?i)(package|top_r\d+$|esd_r\d+$)", segment))
+    """
+    True if this segment is a chip-level wrapper (package / top / chip-level
+    ESD wrapper).
+
+    'mpq8897_esd_r3' (chip-level wrapper) → wrapper = True
+    'esd3a_r0' (real ESD device cell) → wrapper = False — let it match the
+    ESD device patterns in SEVERITY_PATTERNS instead.
+    """
+    if re.search(r"(?i)package", segment):
+        return True
+    if re.search(r"(?i)top_r\d+$", segment):
+        return True
+    # Chip-level ESD wrapper looks like '..._ESD_R3' — i.e. 'esd' as its own
+    # underscore-separated word, not glued to a digit/letter like 'esd3a'.
+    if re.search(r"(?i)(^|_)esd_r\d+$", segment):
+        return True
+    return False
 
 
 def classify_path(path_str):
