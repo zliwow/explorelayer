@@ -68,13 +68,22 @@ def rank_candidates(defs, x_refs, gds_top=None):
     gds_match_fuzzy = []
     if gds_top:
         gt = gds_top.lower()
+        # Token-based fuzzy: split on _ and non-alnum, compare token overlap
+        gt_tokens = set(re.split(r"[^a-z0-9]+", gt)) - {""}
         for name, pins, ln, ps in defs:
             if name.lower() == gt:
                 gds_match_exact = (name, pins, ln, ps)
+        scored = []
         for name, pins, ln, ps in defs:
-            if gt in name.lower() or name.lower() in gt:
-                if not gds_match_exact or name != gds_match_exact[0]:
-                    gds_match_fuzzy.append((name, pins, ln, ps))
+            if gds_match_exact and name == gds_match_exact[0]:
+                continue
+            n_tokens = set(re.split(r"[^a-z0-9]+", name.lower())) - {""}
+            overlap = len(gt_tokens & n_tokens)
+            if overlap == 0:
+                continue
+            scored.append((overlap, pins, name, ln, ps))
+        scored.sort(reverse=True)  # highest overlap, then pin count
+        gds_match_fuzzy = [(n, p, l, ps) for _, p, n, l, ps in scored[:10]]
 
     return root_info, gds_match_exact, gds_match_fuzzy
 
@@ -115,9 +124,20 @@ def report(path, defs, x_refs, root_info, gds_match_exact, gds_match_fuzzy, gds_
 
     out.append("=== Recommendation ===")
     chosen = None
+    root_names = {r[0] for r in root_info}
     if gds_match_exact:
         chosen = gds_match_exact
         out.append(f"  Use: {chosen[0]}  (exact match to GDS top)")
+    elif gds_match_fuzzy:
+        # Prefer a fuzzy match that is ALSO a root subckt
+        for cand in gds_match_fuzzy:
+            if cand[0] in root_names:
+                chosen = cand
+                out.append(f"  Use: {chosen[0]}  (token-match to GDS top AND a root)")
+                break
+        if not chosen:
+            chosen = gds_match_fuzzy[0]
+            out.append(f"  Use: {chosen[0]}  (best token-match to GDS top)")
     elif root_info:
         chosen = root_info[0]
         out.append(f"  Use: {chosen[0]}  ({chosen[1]} pins — largest root subckt)")
