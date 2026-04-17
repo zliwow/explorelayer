@@ -25,6 +25,21 @@ def scan(path):
     defs = []          # list of (name, pin_count, line_no, pins_sample)
     x_refs = Counter() # subckt name -> instance count
 
+    # Subckt headers can span many '+' continuation lines — for PMIC chip tops
+    # the pin list is often thousands long, so we buffer header lines until
+    # we hit a non-continuation line, then count.
+    pending_header = None   # dict: name, start_line, tokens (list of header tokens after name)
+
+    def flush_header():
+        nonlocal pending_header
+        if pending_header is None:
+            return
+        tokens = pending_header["tokens"]
+        pins = [t for t in tokens if "=" not in t]
+        defs.append((pending_header["name"], len(pins),
+                     pending_header["start_line"], pins[:20]))
+        pending_header = None
+
     with open(path, "r", errors="replace") as f:
         for lineno, raw in enumerate(f, 1):
             stripped = raw.strip()
@@ -33,24 +48,37 @@ def scan(path):
             first = stripped[0]
             if first in ("*", "$") or stripped.startswith("//"):
                 continue
+
+            # Continuation line — append tokens to any pending header
             if first == "+":
+                if pending_header is not None:
+                    extra = stripped[1:].strip().split()
+                    pending_header["tokens"].extend(extra)
                 continue
 
             low = stripped.lower()
 
             if low.startswith(".subckt") or low.startswith("subckt "):
+                flush_header()
                 parts = stripped.split()
                 if len(parts) >= 2:
-                    name = parts[1]
-                    pins = [p for p in parts[2:] if "=" not in p]
-                    defs.append((name, len(pins), lineno, pins[:20]))
+                    pending_header = {
+                        "name": parts[1],
+                        "start_line": lineno,
+                        "tokens": parts[2:],
+                    }
                 continue
+
+            # Any non-continuation, non-subckt line ends the previous header
+            flush_header()
 
             if first.upper() == "X":
                 tokens = stripped.split()
                 non_param = [t for t in tokens[1:] if not PARAM_RE.match(t)]
                 if non_param:
                     x_refs[non_param[-1]] += 1
+
+        flush_header()
 
     return defs, x_refs
 
