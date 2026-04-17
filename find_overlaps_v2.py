@@ -41,41 +41,86 @@ from shapely.validation import make_valid
 
 SEVERITY_PATTERNS = [
     # (regex, tier, reason). Order roughly most → least specific.
-    (r"(?i)(^|[_/])(bg|bgref|bandgap|vref|ibias|vbias|vref_|iref)([_<]|$|/)",
+    # Patterns are matched against the LEAF segment (deepest cell name) of
+    # the owner path. That's deliberate — matching against the whole path
+    # makes everything inherit "high" from a chip-level wrapper like
+    # MPQ8897_ESD_R3, which is the ESD wrapper around the entire die, not
+    # a real ESD clamp device.
+    (r"(?i)(^|_)(bg|bgref|bandgap|vref|ibias|vbias|iref)(_|<|$)",
      "high",
      "bandgap / voltage or current reference — RDL crossings skew matching and introduce stress drift"),
-    (r"(?i)(^|[_/])(match|mirror|diffpair|diff_pair|otaamp|opamp|preamp|cmr)([_<]|$|/)",
+    (r"(?i)(^|_)(match|mirror|diffpair|diff_pair|otaamp|opamp|preamp|cmr)(_|<|$)",
      "high",
      "matched pair / current mirror / amplifier front-end — critical for offset and CMRR"),
-    (r"(?i)(^|[_/])(esd|clamp)([_<]|$|/)",
+    (r"(?i)(^|_)(esdclamp|esd_clamp|clamp)(_|<|$)",
      "high",
-     "ESD network — unexpected overlap may affect clamp discharge path"),
-    (r"(?i)(^|[_/])(ldo|buck|boost|pfm|pwm|regulator)([_<]|$|/)",
+     "ESD clamp device — unexpected overlap may affect discharge path"),
+    (r"(?i)(^|_)(ldo|buck|boost|pfm|pwm|regulator)(_|<|$)",
      "medium",
      "regulator / power-conversion block — sensitive to thermal and metal coupling"),
-    (r"(?i)(^|[_/])(adc|dac|sar|comparator|cmp)([_<]|$|/)",
+    (r"(?i)(^|_)(adc|dac|sar|comparator)(_|<|$)",
      "medium",
      "converter front-end — INL/DNL sensitive to asymmetry"),
-    (r"(?i)(^|[_/])(osc|pll|pfd|vco|clk)([_<]|$|/)",
+    (r"(?i)(^|_)(osc|pll|pfd|vco)(_|<|$)",
      "medium",
      "oscillator / PLL / clock — jitter sensitive to substrate coupling"),
-    (r"(?i)(^|[_/])(pad|bond|vss|vdd|gnd|agnd|pgnd|vdd[a-z0-9]*)([_<]|$|/)",
+    (r"(?i)(^|_)(pad|bond|vss|vdd|gnd|agnd|pgnd)(_|<|$)",
      "low",
      "pad / power rail — usually an intentional stackup"),
-    (r"(?i)(^|[_/])(fill|filler|decap|tap|guard)([_<]|$|/)",
+    (r"(?i)(^|_)(fill|filler|decap|tap|guard|dummy)(_|<|$)",
      "low",
      "fill / decap / guard — typically intentional layout feature"),
+]
+
+# Wrapper / IP names that should always be downgraded — they're the chip-level
+# wrapper or vendor IP and the polygons inside aren't actually analog-sensitive.
+WRAPPER_PATTERNS = [
+    (r"(?i)package", "info", "chip-level package wrapper"),
+    (r"(?i)esd_r\d+$", "info", "chip-level ESD wrapper, not a real clamp"),
+    (r"(?i)top_r\d+$", "info", "chip-level top wrapper"),
+    (r"(?i)(mem|sram|rom|ram|cell_flat|x[a-z0-9]*memory|xr[s]?\d+[a-z0-9]+)",
+     "low",
+     "memory IP block — RDL routing over compiled memory is usually intentional"),
 ]
 
 TIER_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 
 
+def _path_segments(path_str):
+    return [s for s in path_str.split("/") if s] if path_str else []
+
+
+def _is_wrapper(segment):
+    """True if this segment is a chip-level wrapper (package/top/ESD wrapper)."""
+    return bool(re.search(r"(?i)(package|top_r\d+$|esd_r\d+$)", segment))
+
+
 def classify_path(path_str):
-    """Return (tier, reason_list). Multiple patterns may match; keep the highest tier."""
+    """
+    Return (tier, reason_list).
+
+    Two-pass logic:
+      1. If the LEAF is a wrapper / vendor IP block, that's the ceiling
+         (chip-level wrapper or compiled memory should never get 'high'
+         even if an ancestor name happens to contain 'esd' or 'match').
+      2. Otherwise scan all NON-wrapper segments for severity keywords.
+    """
+    segs = _path_segments(path_str)
+    if not segs:
+        return "info", []
+    leaf = segs[-1]
+
+    for regex, tier, reason in WRAPPER_PATTERNS:
+        if re.search(regex, leaf):
+            return tier, [f"[{tier}] {reason} (leaf={leaf})"]
+
+    # Scan severity patterns against any non-wrapper segment.
     matched = []
-    for regex, tier, reason in SEVERITY_PATTERNS:
-        if re.search(regex, path_str):
-            matched.append((tier, reason))
+    candidates = [s for s in segs if not _is_wrapper(s)]
+    for seg in candidates:
+        for regex, tier, reason in SEVERITY_PATTERNS:
+            if re.search(regex, seg):
+                matched.append((tier, f"{reason} (segment={seg})"))
     if not matched:
         return "info", []
     best_tier = max((t for t, _ in matched), key=lambda t: TIER_ORDER[t])
@@ -521,11 +566,33 @@ def main():
         with open(args.output, "w") as f:
             f.write(output_json)
         print(f"Results written to {args.output}")
-        # Also print the top of the grouped view so you can eyeball it immediately
-        print("\n=== Top 10 grouped findings (by severity then overlap area) ===")
-        for g in groups[:10]:
+
+        # Tier distribution
+        print("\n=== Tier distribution (groups) ===")
+        for tier in ["high", "medium", "low", "info"]:
+            n = group_tier_counts.get(tier, 0)
+            if n:
+                print(f"  {tier:>6}: {n} groups")
+
+        # Top groups (skip info if any non-info exist, otherwise show info)
+        non_info = [g for g in groups if g["severity_tier"] != "info"]
+        show = non_info[:15] if non_info else groups[:15]
+        title = "Top 15 actionable groups" if non_info else "Top 15 groups (all 'info' — no analog-name match yet)"
+        print(f"\n=== {title} ===")
+        for g in show:
             print(f"  [{g['severity_tier']:>6}] {g['check_layer']:>14}  x{g['count']:>3}  "
                   f"area={g['total_overlap_area']:>10.1f}  {g['owner_path']}")
+
+        # Unique leaf cell distribution — useful for refining severity patterns
+        leaf_counter = Counter()
+        leaf_area = defaultdict(float)
+        for g in groups:
+            leaf = (g["owner_path"] or "").rsplit("/", 1)[-1] if g["owner_path"] else "(unresolved)"
+            leaf_counter[leaf] += g["count"]
+            leaf_area[leaf] += g["total_overlap_area"]
+        print("\n=== Top 20 leaf cells by overlap count (use these to refine severity patterns) ===")
+        for leaf, cnt in leaf_counter.most_common(20):
+            print(f"  {cnt:>5} overlaps  area={leaf_area[leaf]:>10.1f}  {leaf}")
     else:
         print(output_json)
 
