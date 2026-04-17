@@ -68,8 +68,7 @@ def rank_candidates(defs, x_refs, gds_top=None):
     gds_match_fuzzy = []
     if gds_top:
         gt = gds_top.lower()
-        # Token-based fuzzy: split on _ and non-alnum, compare token overlap
-        gt_tokens = set(re.split(r"[^a-z0-9]+", gt)) - {""}
+        gt_tokens = _tokenize(gt)
         for name, pins, ln, ps in defs:
             if name.lower() == gt:
                 gds_match_exact = (name, pins, ln, ps)
@@ -77,15 +76,43 @@ def rank_candidates(defs, x_refs, gds_top=None):
         for name, pins, ln, ps in defs:
             if gds_match_exact and name == gds_match_exact[0]:
                 continue
-            n_tokens = set(re.split(r"[^a-z0-9]+", name.lower())) - {""}
-            overlap = len(gt_tokens & n_tokens)
-            if overlap == 0:
+            n_tokens = _tokenize(name.lower())
+            shared = gt_tokens & n_tokens
+            if not shared:
                 continue
-            scored.append((overlap, pins, name, ln, ps))
-        scored.sort(reverse=True)  # highest overlap, then pin count
-        gds_match_fuzzy = [(n, p, l, ps) for _, p, n, l, ps in scored[:10]]
+            # Weight the overlap: long tokens (chip-name-like) count more
+            score = sum(len(t) for t in shared)
+            scored.append((score, len(shared), pins, name, ln, ps))
+        scored.sort(reverse=True)  # highest weighted-overlap, then count, then pin count
+        gds_match_fuzzy = [(n, p, l, ps) for _, _, p, n, l, ps in scored[:10]]
 
     return root_info, gds_match_exact, gds_match_fuzzy
+
+
+def _tokenize(s):
+    """
+    Token splitter that handles hybrid alphanumeric names.
+
+    Generates three layers of tokens so naming-convention differences
+    between GDS top cells and CDL subckts still overlap:
+      - whole alphanumeric blocks (split on _ / -)
+      - pure-alpha and pure-digit runs within each block
+      - adjacent letter+digit pairs (so 'r4', 'div2' survive)
+
+    'mpq8897r4_1'    -> {mpq8897r4, mpq, 8897, r4, mpq8897, 8897r}
+    'mpq8897_top_r4' -> {mpq8897, top, r4, mpq, 8897}
+
+    Drops tokens shorter than 2 chars to filter lone-digit noise.
+    """
+    tokens = set()
+    blocks = [b for b in re.split(r"[^a-z0-9]+", s) if b]
+    tokens.update(blocks)
+    for b in blocks:
+        parts = re.findall(r"[a-z]+|[0-9]+", b)
+        tokens.update(parts)
+        for i in range(len(parts) - 1):
+            tokens.add(parts[i] + parts[i + 1])
+    return {t for t in tokens if len(t) >= 2}
 
 
 def report(path, defs, x_refs, root_info, gds_match_exact, gds_match_fuzzy, gds_top):
