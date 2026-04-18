@@ -24,6 +24,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 import textwrap
 import time
@@ -83,14 +84,39 @@ def attach_geometry(top_groups, raw_findings):
 # ── LLM call (OpenAI-compatible chat completions) ──────────────────────
 
 LLM_SYSTEM = (
-    "You are an analog/mixed-signal layout reviewer. Given one detector "
-    "finding (a metal/poly polygon overlap detected under a pad or RDL), "
-    "write a 3-4 sentence explanation aimed at the layout (LO) and design "
-    "(DE) engineers. Cover: (1) what the affected cell likely is, "
-    "(2) why this overlap could matter (mechanical stress, capacitive "
-    "coupling, ESD/discharge path, matching, current density), and "
-    "(3) what to check or do next. Be specific. No filler. Plain text only."
+    "You are an analog/mixed-signal layout reviewer writing for a layout "
+    "(LO) engineer and a design (DE) engineer. "
+    "Given ONE detector finding, write EXACTLY three short paragraphs "
+    "separated by a blank line. No headers, no bullet points, no "
+    "markdown formatting, no thinking, no preamble, no lists. "
+    "Paragraph 1: what this finding is (the cell, the layer, what's "
+    "crossing what). "
+    "Paragraph 2: why this could matter — pick the most likely physical "
+    "mechanism (piezo-stress, capacitive coupling, ESD discharge path, "
+    "thermal asymmetry, current density, matching) and explain in one "
+    "or two sentences. "
+    "Paragraph 3: what to verify or change. Be concrete. "
+    "Write directly in plain prose. Start with paragraph 1. "
+    "Do not use the words 'Analyze', 'Role', 'Task', 'Constraints', "
+    "'Requirements', or any self-referential meta-talk."
 )
+
+
+THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+MD_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+MD_HEADER_RE = re.compile(r"^\s*#{1,6}\s+", re.MULTILINE)
+
+
+def clean_llm_text(text):
+    """Strip Qwen3 thinking tags and markdown so the panel renders readably."""
+    if not text:
+        return text
+    t = THINK_RE.sub("", text)
+    t = MD_BOLD_RE.sub(r"\1", t)
+    t = MD_HEADER_RE.sub("", t)
+    # Collapse 3+ blank lines to 2
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
 
 
 def discover_model(llm_url, timeout=5):
@@ -113,9 +139,13 @@ def discover_model(llm_url, timeout=5):
     return None
 
 
-def call_llm(prompt, url, model, timeout=30):
+def call_llm(prompt, url, model, timeout=60):
     """POST to /v1/chat/completions and return the assistant text. Returns
-    None on any failure so callers fall back to template text."""
+    None on any failure so callers fall back to template text.
+
+    Thinking-model handling: tries to disable Qwen3 thinking via
+    chat_template_kwargs; if the response still returns content=null,
+    falls back to reasoning_content and strips <think>...</think> blocks."""
     body = {
         "model": model,
         "messages": [
@@ -123,7 +153,10 @@ def call_llm(prompt, url, model, timeout=30):
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.2,
-        "max_tokens": 350,
+        "max_tokens": 600,
+        # Qwen3-on-sglang: ask the chat template to disable thinking so
+        # the answer lands in `content` instead of `reasoning_content`.
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
@@ -134,10 +167,8 @@ def call_llm(prompt, url, model, timeout=30):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         msg = payload["choices"][0]["message"]
-        # Qwen3 thinking models put the answer in reasoning_content and leave
-        # content = null. Prefer real content; fall back to reasoning_content.
         text = msg.get("content") or msg.get("reasoning_content") or ""
-        text = text.strip()
+        text = clean_llm_text(text)
         return text or None
     except (urllib.error.URLError, urllib.error.HTTPError,
             KeyError, TypeError, AttributeError,
@@ -220,35 +251,53 @@ LAYER_COLOR_CYCLE = ["#1f77b4", "#2ca02c", "#9467bd", "#8c564b",
 
 
 def render_chip_panel(ax, chip_bb, top_groups):
+    """Chip outline + visible circle markers at each finding. Finding boxes
+    themselves are usually too small to see at die scale, so we draw a
+    die-relative-sized circle with a numeric label instead."""
     x0, y0, x1, y1 = chip_bb
-    pad = 0.02 * max(x1 - x0, y1 - y0)
-    ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0,
-                           fill=False, edgecolor="#333", linewidth=1.0))
+    w_die, h_die = x1 - x0, y1 - y0
+    pad = 0.02 * max(w_die, h_die)
+    ax.add_patch(Rectangle((x0, y0), w_die, h_die,
+                           fill=False, edgecolor="#bbb", linewidth=1.2))
+
+    # Marker size scales to the die so it's always visible
+    marker_r = 0.025 * max(w_die, h_die)
+
+    from matplotlib.patches import Circle
     for i, g in enumerate(top_groups, 1):
         color = TIER_COLOR.get(g["severity_tier"], "#666")
-        for kind, bb in g.get("_bboxes", []):
-            bx0, by0, bx1, by1 = bb
-            w, h = bx1 - bx0, by1 - by0
-            # Boxes can be tiny relative to die; pad them so they're visible
-            min_size = 0.005 * max(x1 - x0, y1 - y0)
-            if w < min_size:
-                bx0 -= (min_size - w) / 2
-                w = min_size
-            if h < min_size:
-                by0 -= (min_size - h) / 2
-                h = min_size
-            ax.add_patch(Rectangle((bx0, by0), w, h,
-                                   fill=False, edgecolor=color, linewidth=1.4))
-        # numeric label at first bbox
-        if g.get("_bboxes"):
-            bb0 = g["_bboxes"][0][1]
-            ax.text(bb0[0], bb0[3], f"#{i}",
-                    color=color, fontsize=9, fontweight="bold",
-                    ha="left", va="bottom")
+        if not g.get("_bboxes"):
+            continue
+        bb = g["_bboxes"][0][1]
+        cx = (bb[0] + bb[2]) / 2
+        cy = (bb[1] + bb[3]) / 2
+        # Outer transparent ring + inner filled dot
+        ax.add_patch(Circle((cx, cy), marker_r * 1.4, fill=False,
+                            edgecolor=color, linewidth=1.8, alpha=0.9))
+        ax.add_patch(Circle((cx, cy), marker_r * 0.5,
+                            color=color, alpha=0.85))
+        # Label outside the marker so it doesn't get covered
+        ax.text(cx + marker_r * 1.6, cy, f"#{i}",
+                color=color, fontsize=11, fontweight="bold",
+                ha="left", va="center")
+
+    # Legend
+    legend_rows = []
+    for tier in ("high", "medium", "low", "info"):
+        if any(g["severity_tier"] == tier for g in top_groups):
+            legend_rows.append((tier, TIER_COLOR[tier]))
+    lx = x0 + pad
+    ly = y1 - pad
+    for tier, col in legend_rows:
+        ax.add_patch(Circle((lx, ly), marker_r * 0.35, color=col))
+        ax.text(lx + marker_r * 0.8, ly, tier,
+                color=col, fontsize=9, va="center", ha="left")
+        ly -= marker_r * 1.1
+
     ax.set_xlim(x0 - pad, x1 + pad)
     ax.set_ylim(y0 - pad, y1 + pad)
     ax.set_aspect("equal")
-    ax.set_title("Chip layout — top findings highlighted",
+    ax.set_title(f"Chip layout — {len(top_groups)} top findings",
                  fontsize=11, loc="left")
     ax.set_xticks([]); ax.set_yticks([])
 
@@ -301,29 +350,54 @@ def render_inset_panel(ax, top_cell, top_groups, layer_lookup):
     ax.set_xticks([]); ax.set_yticks([])
 
 
+def _wrap_per_paragraph(text, width):
+    """Wrap preserving paragraph breaks. Caller gets back one string with
+    internal newlines."""
+    paras = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    return "\n\n".join(textwrap.fill(p, width=width) for p in paras)
+
+
+def _line_count(wrapped):
+    return wrapped.count("\n") + 1
+
+
 def render_analysis_panel(ax, top_groups, blurbs, llm_used):
     ax.axis("off")
     title = "AI analysis" + (" (Qwen)" if llm_used else " (template fallback — LLM unavailable)")
     ax.text(0.0, 1.0, title, fontsize=12, fontweight="bold",
             ha="left", va="top", transform=ax.transAxes)
-    y = 0.93
+
+    # We render each finding as a mini-card (header + body). Compute the
+    # per-line vertical step from the axes height so everything fits.
+    n = len(top_groups)
+    top_y = 0.95
+    bottom_y = 0.02
+    available = top_y - bottom_y
+    # Split evenly between findings; header eats a fixed share
+    per_card = available / max(n, 1)
+    header_frac = 0.22
+
     for i, (g, blurb) in enumerate(zip(top_groups, blurbs), 1):
+        card_top = top_y - (i - 1) * per_card
         leaf = (g["owner_path"] or "").rsplit("/", 1)[-1] or "(unknown)"
-        head = (f"#{i}  [{g['severity_tier']}]  {leaf}  /  {g['check_layer']}  "
-                f"·  count={g['count']}  area={g['total_overlap_area']:.1f}")
-        ax.text(0.0, y, head, fontsize=9.5, fontweight="bold",
+        head = (f"#{i}  [{g['severity_tier']}]  {leaf}  /  {g['check_layer']}"
+                f"   ·  count={g['count']}   area={g['total_overlap_area']:.1f} µm²")
+        ax.text(0.0, card_top, head, fontsize=10, fontweight="bold",
                 ha="left", va="top", transform=ax.transAxes,
                 color=TIER_COLOR.get(g["severity_tier"], "#000"))
-        y -= 0.035
-        wrapped = textwrap.fill(blurb, width=145)
-        ax.text(0.01, y, wrapped, fontsize=8.5,
+
+        body_top = card_top - per_card * header_frac
+        body_height_frac = per_card * (1.0 - header_frac) - 0.006
+        # Wrap to a width that fits body_height_frac given font size 8.5
+        wrapped = _wrap_per_paragraph(blurb, width=150)
+        # Truncate to what fits
+        max_lines = max(3, int(body_height_frac / 0.019))
+        lines = wrapped.split("\n")
+        if len(lines) > max_lines:
+            lines = lines[:max_lines - 1] + ["  …"]
+        ax.text(0.005, body_top, "\n".join(lines), fontsize=8.5,
                 ha="left", va="top", transform=ax.transAxes,
-                family="monospace")
-        y -= 0.035 * (wrapped.count("\n") + 1) + 0.02
-        if y < 0.05:
-            ax.text(0.0, y, "  … (more findings truncated; see findings_v2.json)",
-                    fontsize=8, ha="left", va="top", transform=ax.transAxes)
-            break
+                family="DejaVu Sans")
 
 
 # ── Main ───────────────────────────────────────────────────────────────
