@@ -93,6 +93,26 @@ LLM_SYSTEM = (
 )
 
 
+def discover_model(llm_url, timeout=5):
+    """GET /v1/models (derived from the chat URL) and return the first model id.
+    Returns None if the server isn't reachable or response isn't usable."""
+    if "/chat/completions" in llm_url:
+        models_url = llm_url.replace("/chat/completions", "/models")
+    elif llm_url.rstrip("/").endswith("/v1"):
+        models_url = llm_url.rstrip("/") + "/models"
+    else:
+        models_url = llm_url.rstrip("/") + "/v1/models"
+    try:
+        with urllib.request.urlopen(models_url, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        data = payload.get("data") or []
+        if data and isinstance(data, list):
+            return data[0].get("id")
+    except Exception:
+        return None
+    return None
+
+
 def call_llm(prompt, url, model, timeout=30):
     """POST to /v1/chat/completions and return the assistant text. Returns
     None on any failure so callers fall back to template text."""
@@ -302,20 +322,61 @@ def render_analysis_panel(ax, top_groups, blurbs, llm_used):
 
 # ── Main ───────────────────────────────────────────────────────────────
 
+def autofind(path_candidates, kind):
+    """Return the first existing path from a list, else None."""
+    for p in path_candidates:
+        if p and os.path.exists(p):
+            return p
+    print(f"Could not auto-find {kind}. Pass it as a positional argument.")
+    return None
+
+
+def autofind_gds():
+    import glob
+    for pat in ("examples/*.gds", "*.gds", "**/*.gds"):
+        matches = sorted(glob.glob(pat, recursive=True))
+        if matches:
+            return matches[0]
+    return None
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("findings_json")
-    p.add_argument("gds_file")
+    p.add_argument("findings_json", nargs="?", default=None,
+                   help="default: findings_v2.json")
+    p.add_argument("gds_file", nargs="?", default=None,
+                   help="default: first .gds under examples/ or cwd")
     p.add_argument("--output", default="report_v2.png")
     p.add_argument("--top", type=int, default=5)
     p.add_argument("--llm-url", default="http://localhost:8000/v1/chat/completions")
-    p.add_argument("--llm-model", default="qwen")
+    p.add_argument("--llm-model", default=None,
+                   help="default: auto-discover from /v1/models")
     p.add_argument("--no-llm", action="store_true",
                    help="Skip the LLM call and always use the template blurb.")
     args = p.parse_args()
 
-    print(f"Loading {args.findings_json} ...")
-    report = load_findings(args.findings_json)
+    findings_path = args.findings_json or autofind(
+        ["findings_v2.json", "findings.json"], "findings JSON")
+    gds_path = args.gds_file or autofind_gds()
+    if not findings_path or not gds_path:
+        sys.exit(1)
+    if not args.findings_json:
+        print(f"[auto] findings: {findings_path}")
+    if not args.gds_file:
+        print(f"[auto] gds:      {gds_path}")
+
+    # Auto-discover model id if not provided
+    llm_model = args.llm_model
+    if not args.no_llm and not llm_model:
+        print(f"Discovering model id from {args.llm_url.replace('/chat/completions', '/models')} ...")
+        llm_model = discover_model(args.llm_url)
+        if llm_model:
+            print(f"[auto] llm-model: {llm_model}")
+        else:
+            print("  server not reachable — using fallback template for all findings")
+
+    print(f"Loading {findings_path} ...")
+    report = load_findings(findings_path)
     raw = report.get("findings", [])
     top_groups = pick_top_findings(report, args.top)
     if not top_groups:
@@ -323,9 +384,9 @@ def main():
         sys.exit(1)
     attach_geometry(top_groups, raw)
 
-    print(f"Loading {args.gds_file} ...")
+    print(f"Loading {gds_path} ...")
     t0 = time.time()
-    lib = gdstk.read_gds(args.gds_file)
+    lib = gdstk.read_gds(gds_path)
     top = lib.top_level()
     if not top:
         print("No top cell.")
@@ -350,7 +411,7 @@ def main():
             continue
         prompt = build_prompt(g)
         print(f"  [{i}/{len(top_groups)}] calling LLM ...", end="", flush=True)
-        text = call_llm(prompt, args.llm_url, args.llm_model)
+        text = call_llm(prompt, args.llm_url, llm_model) if llm_model else None
         if text:
             print(" ok")
             blurbs.append(text)
@@ -372,7 +433,7 @@ def main():
     render_analysis_panel(ax_text, top_groups, blurbs, llm_used)
 
     fig.suptitle(
-        f"GDS layout review — {os.path.basename(args.gds_file)} "
+        f"GDS layout review — {os.path.basename(gds_path)} "
         f"·  {len(raw)} raw findings → {len(top_groups)} top groups",
         fontsize=13, fontweight="bold",
     )
