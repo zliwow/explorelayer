@@ -1,0 +1,22 @@
+{
+  "_comment": "Layer config for the demo chip. RDL is the 'problem' layer — we flag any sensitive-layer polygon that sits underneath RDL routing.",
+
+  "pad_layers":  [[60, 0]],
+  "rdl_layers":  [[50, 0]],
+
+  "check_layers": [
+    {"name": "BJT_marker", "layer": [82, 5], "why": "Matched BJT pairs are extremely sensitive to mechanical/thermal asymmetry — RDL above them skews Vbe matching."},
+    {"name": "diff",       "layer": [1, 0],  "why": "Active devices under RDL can suffer piezo-stress shifts in threshold/beta."},
+    {"name": "poly",       "layer": [5, 0],  "why": "Poly resistors / matched poly under RDL can gain systematic offset."},
+    {"name": "met3",       "layer": [33, 0], "why": "Top signal metal parallel to RDL with no ground shield gives capacitive coupling."}
+  ],
+
+  "min_overlap_area": 1.0,
+
+  "sensitivity_ranking": {
+    "BJT_marker": "critical",
+    "diff": "high",
+    "poly": "medium",
+    "met3": "low"
+  }
+}

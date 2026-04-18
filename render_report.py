@@ -139,13 +139,15 @@ def discover_model(llm_url, timeout=5):
     return None
 
 
-def call_llm(prompt, url, model, timeout=60):
+def call_llm(prompt, url, model, timeout=600):
     """POST to /v1/chat/completions and return the assistant text. Returns
     None on any failure so callers fall back to template text.
 
-    Thinking-model handling: tries to disable Qwen3 thinking via
-    chat_template_kwargs; if the response still returns content=null,
-    falls back to reasoning_content and strips <think>...</think> blocks."""
+    Thinking is left ON. Qwen3 writes its chain-of-thought to
+    reasoning_content (or a <think> block) and the final answer to
+    content. We use content; if content is null we fall back to
+    reasoning_content with <think> stripped. Large max_tokens so
+    thinking + answer both fit comfortably."""
     body = {
         "model": model,
         "messages": [
@@ -153,10 +155,7 @@ def call_llm(prompt, url, model, timeout=60):
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.2,
-        "max_tokens": 600,
-        # Qwen3-on-sglang: ask the chat template to disable thinking so
-        # the answer lands in `content` instead of `reasoning_content`.
-        "chat_template_kwargs": {"enable_thinking": False},
+        "max_tokens": 8000,
     }
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(

@@ -1,0 +1,48 @@
+* =========================================================
+* demo_chip.cdl — matching netlist for demo_chip.gds
+* Synthetic bandgap-reference mini-chip used to prove out the
+* Claude-assisted layout-issue detector. The BANDGAP_REF subckt
+* has a matched PNP pair Q1/Q2 that the overlap checker will flag.
+* =========================================================
+
+* --- BJT (PNP) subckt stub ---
+.SUBCKT BJT_PNP C B E
++ XQ C B E pnp_1x1 area=1
+.ENDS
+
+* --- MOSFET subckt stub ---
+.SUBCKT MOS_PMOS D G S B
++ XM D G S B pmos_1x1 w=2u l=500n
+.ENDS
+
+* --- Poly resistor ---
+.SUBCKT RES_POLY A B
++ RR A B poly_res r=1k
+.ENDS
+
+* --- Bandgap reference core ---
+* Matched PNP pair Q1/Q2 generates PTAT voltage.
+* Q1 and Q2 MUST be laid out with strict matching (common centroid,
+* thermal symmetry, no asymmetric metal/RDL above them).
+.SUBCKT BANDGAP_REF vbg vdda vssa
++ XQ1 vssa bg_base bg_e1 BJT_PNP
++ XQ2 vssa bg_base bg_e2 BJT_PNP
++ XM1 bg_e1 bg_gate vdda vdda MOS_PMOS
++ XM2 bg_e2 bg_gate vdda vdda MOS_PMOS
++ XR1 bg_e2 bg_res_a RES_POLY
++ XR2 bg_res_a bg_res_b RES_POLY
++ XR3 bg_res_b vssa RES_POLY
+.ENDS
+
+* --- Digital block (trivial) ---
+.SUBCKT DIGITAL_BLOCK clk din dout vdd vss
++ XM_INV1 dout din vdd vdd MOS_PMOS
++ XM_INV2 dout din vss vss MOS_PMOS
+.ENDS
+
+* --- Chip top ---
+* Pin order mirrors the pads placed on the GDS top cell.
+.SUBCKT analog_chip_top VIN VOUT VREF GND EN SDA SCL VDDA
++ XBG VREF VDDA GND BANDGAP_REF
++ XDIG SCL SDA VOUT VDDA GND DIGITAL_BLOCK
+.ENDS
