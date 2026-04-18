@@ -133,9 +133,15 @@ def call_llm(prompt, url, model, timeout=30):
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
-        return payload["choices"][0]["message"]["content"].strip()
+        msg = payload["choices"][0]["message"]
+        # Qwen3 thinking models put the answer in reasoning_content and leave
+        # content = null. Prefer real content; fall back to reasoning_content.
+        text = msg.get("content") or msg.get("reasoning_content") or ""
+        text = text.strip()
+        return text or None
     except (urllib.error.URLError, urllib.error.HTTPError,
-            KeyError, json.JSONDecodeError, TimeoutError) as exc:
+            KeyError, TypeError, AttributeError,
+            json.JSONDecodeError, TimeoutError) as exc:
         print(f"  LLM call failed: {exc}", file=sys.stderr)
         return None
 
