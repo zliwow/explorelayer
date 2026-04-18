@@ -1,0 +1,1037 @@
+{
+  "gds_file": "complex_chip.gds",
+  "top_cell": "analog_ip_top",
+  "finding_count": 15,
+  "groups": [
+    {
+      "rule": "rdl_over_bjt_pair",
+      "block": "BANDGAP_REF",
+      "sensitivity": "critical",
+      "why": "RDL crossing matched BJT pair (Q1/Q2) creates thermal asymmetry and piezo-stress, skewing Vbe and breaking the bandgap reference.",
+      "aggressor_label": "RDL",
+      "victim_label": "BJT_marker",
+      "agg_route_label": "RDL_VIN",
+      "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+      "count": 2,
+      "total_overlap_area": 900.0,
+      "items": [
+        {
+          "rule": "rdl_over_bjt_pair",
+          "sensitivity": "critical",
+          "why": "RDL crossing matched BJT pair (Q1/Q2) creates thermal asymmetry and piezo-stress, skewing Vbe and breaking the bandgap reference.",
+          "aggressor_label": "RDL",
+          "victim_label": "BJT_marker",
+          "agg_index": 0,
+          "agg_route_label": "RDL_VIN",
+          "agg_bounds": [
+            70.0,
+            135.0,
+            280.0,
+            155.0
+          ],
+          "victim_bounds": [
+            100.0,
+            140.0,
+            130.0,
+            170.0
+          ],
+          "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+          "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(100,140)",
+          "block": "BANDGAP_REF",
+          "overlap_area": 450.0,
+          "overlap_bounds": [
+            100.0,
+            140.0,
+            130.0,
+            155.0
+          ]
+        },
+        {
+          "rule": "rdl_over_bjt_pair",
+          "sensitivity": "critical",
+          "why": "RDL crossing matched BJT pair (Q1/Q2) creates thermal asymmetry and piezo-stress, skewing Vbe and breaking the bandgap reference.",
+          "aggressor_label": "RDL",
+          "victim_label": "BJT_marker",
+          "agg_index": 0,
+          "agg_route_label": "RDL_VIN",
+          "agg_bounds": [
+            70.0,
+            135.0,
+            280.0,
+            155.0
+          ],
+          "victim_bounds": [
+            150.0,
+            140.0,
+            180.0,
+            170.0
+          ],
+          "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+          "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(150,140)",
+          "block": "BANDGAP_REF",
+          "overlap_area": 450.0,
+          "overlap_bounds": [
+            150.0,
+            140.0,
+            180.0,
+            155.0
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "thick_metal_over_poly",
+      "block": "LDO_REG",
+      "sensitivity": "critical",
+      "why": "Thick high-current top metal over precision poly resistors heats them asymmetrically \u2014 feedback-divider mismatch shifts the regulated output.",
+      "aggressor_label": "MET_THICK",
+      "victim_label": "poly",
+      "agg_route_label": "M_LDO_out",
+      "instance_path": "analog_ip_top / LDO_REG / RES_POLY_80",
+      "count": 2,
+      "total_overlap_area": 640.0,
+      "items": [
+        {
+          "rule": "thick_metal_over_poly",
+          "sensitivity": "critical",
+          "why": "Thick high-current top metal over precision poly resistors heats them asymmetrically \u2014 feedback-divider mismatch shifts the regulated output.",
+          "aggressor_label": "MET_THICK",
+          "victim_label": "poly",
+          "agg_index": 0,
+          "agg_route_label": "M_LDO_out",
+          "agg_bounds": [
+            340.0,
+            120.0,
+            560.0,
+            150.0
+          ],
+          "victim_bounds": [
+            380.0,
+            120.0,
+            460.0,
+            124.0
+          ],
+          "instance_path": "analog_ip_top / LDO_REG / RES_POLY_80",
+          "instance_key": "LDO_REG@(350,100)/RES_POLY_80@(380,120)",
+          "block": "LDO_REG",
+          "overlap_area": 320.0,
+          "overlap_bounds": [
+            380.0,
+            120.0,
+            460.0,
+            124.0
+          ]
+        },
+        {
+          "rule": "thick_metal_over_poly",
+          "sensitivity": "critical",
+          "why": "Thick high-current top metal over precision poly resistors heats them asymmetrically \u2014 feedback-divider mismatch shifts the regulated output.",
+          "aggressor_label": "MET_THICK",
+          "victim_label": "poly",
+          "agg_index": 0,
+          "agg_route_label": "M_LDO_out",
+          "agg_bounds": [
+            340.0,
+            120.0,
+            560.0,
+            150.0
+          ],
+          "victim_bounds": [
+            380.0,
+            135.0,
+            460.0,
+            139.0
+          ],
+          "instance_path": "analog_ip_top / LDO_REG / RES_POLY_80",
+          "instance_key": "LDO_REG@(350,100)/RES_POLY_80@(380,135)",
+          "block": "LDO_REG",
+          "overlap_area": 320.0,
+          "overlap_bounds": [
+            380.0,
+            135.0,
+            460.0,
+            139.0
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "rdl_over_diff",
+      "block": "ESD_IO",
+      "sensitivity": "high",
+      "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+      "aggressor_label": "RDL",
+      "victim_label": "diff",
+      "agg_route_label": null,
+      "instance_path": "analog_ip_top / ESD_IO / ESD_CLAMP_NMOS",
+      "count": 1,
+      "total_overlap_area": 1200.0,
+      "items": [
+        {
+          "rule": "rdl_over_diff",
+          "sensitivity": "high",
+          "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+          "aggressor_label": "RDL",
+          "victim_label": "diff",
+          "agg_index": 1,
+          "agg_route_label": null,
+          "agg_bounds": [
+            85.0,
+            570.0,
+            120.0,
+            690.0
+          ],
+          "victim_bounds": [
+            100.0,
+            570.0,
+            200.0,
+            630.0
+          ],
+          "instance_path": "analog_ip_top / ESD_IO / ESD_CLAMP_NMOS",
+          "instance_key": "ESD_IO@(80,550)/ESD_CLAMP_NMOS@(100,570)",
+          "block": "ESD_IO",
+          "overlap_area": 1200.0,
+          "overlap_bounds": [
+            100.0,
+            570.0,
+            120.0,
+            630.0
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "rdl_over_diff",
+      "block": "BANDGAP_REF",
+      "sensitivity": "high",
+      "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+      "aggressor_label": "RDL",
+      "victim_label": "diff",
+      "agg_route_label": "RDL_VIN",
+      "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+      "count": 4,
+      "total_overlap_area": 612.0,
+      "items": [
+        {
+          "rule": "rdl_over_diff",
+          "sensitivity": "high",
+          "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+          "aggressor_label": "RDL",
+          "victim_label": "diff",
+          "agg_index": 0,
+          "agg_route_label": "RDL_VIN",
+          "agg_bounds": [
+            70.0,
+            135.0,
+            280.0,
+            155.0
+          ],
+          "victim_bounds": [
+            103.0,
+            143.0,
+            127.0,
+            167.0
+          ],
+          "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+          "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(100,140)",
+          "block": "BANDGAP_REF",
+          "overlap_area": 288.0,
+          "overlap_bounds": [
+            103.0,
+            143.0,
+            127.0,
+            155.0
+          ]
+        },
+        {
+          "rule": "rdl_over_diff",
+          "sensitivity": "high",
+          "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+          "aggressor_label": "RDL",
+          "victim_label": "diff",
+          "agg_index": 0,
+          "agg_route_label": "RDL_VIN",
+          "agg_bounds": [
+            70.0,
+            135.0,
+            280.0,
+            155.0
+          ],
+          "victim_bounds": [
+            112.0,
+            152.0,
+            118.0,
+            158.0
+          ],
+          "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+          "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(100,140)",
+          "block": "BANDGAP_REF",
+          "overlap_area": 18.0,
+          "overlap_bounds": [
+            112.0,
+            152.0,
+            118.0,
+            155.0
+          ]
+        },
+        {
+          "rule": "rdl_over_diff",
+          "sensitivity": "high",
+          "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+          "aggressor_label": "RDL",
+          "victim_label": "diff",
+          "agg_index": 0,
+          "agg_route_label": "RDL_VIN",
+          "agg_bounds": [
+            70.0,
+            135.0,
+            280.0,
+            155.0
+          ],
+          "victim_bounds": [
+            153.0,
+            143.0,
+            177.0,
+            167.0
+          ],
+          "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+          "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(150,140)",
+          "block": "BANDGAP_REF",
+          "overlap_area": 288.0,
+          "overlap_bounds": [
+            153.0,
+            143.0,
+            177.0,
+            155.0
+          ]
+        },
+        {
+          "rule": "rdl_over_diff",
+          "sensitivity": "high",
+          "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+          "aggressor_label": "RDL",
+          "victim_label": "diff",
+          "agg_index": 0,
+          "agg_route_label": "RDL_VIN",
+          "agg_bounds": [
+            70.0,
+            135.0,
+            280.0,
+            155.0
+          ],
+          "victim_bounds": [
+            162.0,
+            152.0,
+            168.0,
+            158.0
+          ],
+          "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+          "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(150,140)",
+          "block": "BANDGAP_REF",
+          "overlap_area": 18.0,
+          "overlap_bounds": [
+            162.0,
+            152.0,
+            168.0,
+            155.0
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "digital_signal_near_hi_z",
+      "block": "OSC_LC",
+      "sensitivity": "high",
+      "why": "Switching digital signal parallel to a high-impedance oscillator/tank node injects noise via parasitic capacitance \u2014 phase noise and pulling.",
+      "aggressor_label": "MET2 (digital)",
+      "victim_label": "HI_Z node",
+      "agg_route_label": "CLK_DIG",
+      "instance_path": "analog_ip_top / OSC_LC / IND_POLY",
+      "count": 1,
+      "total_overlap_area": 460.0,
+      "items": [
+        {
+          "rule": "digital_signal_near_hi_z",
+          "sensitivity": "high",
+          "why": "Switching digital signal parallel to a high-impedance oscillator/tank node injects noise via parasitic capacitance \u2014 phase noise and pulling.",
+          "aggressor_label": "MET2 (digital)",
+          "victim_label": "HI_Z node",
+          "agg_index": 0,
+          "agg_route_label": "CLK_DIG",
+          "agg_bounds": [
+            970.0,
+            170.0,
+            1095.0,
+            174.0
+          ],
+          "victim_bounds": [
+            980.0,
+            160.0,
+            1100.0,
+            192.0
+          ],
+          "instance_path": "analog_ip_top / OSC_LC / IND_POLY",
+          "instance_key": "OSC_LC@(950,120)/IND_POLY@(980,160)",
+          "block": "OSC_LC",
+          "overlap_area": 460.0,
+          "overlap_bounds": [
+            980.0,
+            170.0,
+            1095.0,
+            174.0
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "poly_fill_over_input_diff",
+      "block": "COMP_INPUT",
+      "sensitivity": "high",
+      "why": "Dummy poly fill over the diffusion of one matched-pair member (and not the other) creates layout asymmetry \u2014 input-referred offset for the comparator.",
+      "aggressor_label": "POLY_FILL",
+      "victim_label": "diff",
+      "agg_route_label": null,
+      "instance_path": "analog_ip_top / COMP_INPUT / MOS_NMOS",
+      "count": 3,
+      "total_overlap_area": 108.0,
+      "items": [
+        {
+          "rule": "poly_fill_over_input_diff",
+          "sensitivity": "high",
+          "why": "Dummy poly fill over the diffusion of one matched-pair member (and not the other) creates layout asymmetry \u2014 input-referred offset for the comparator.",
+          "aggressor_label": "POLY_FILL",
+          "victim_label": "diff",
+          "agg_index": 0,
+          "agg_route_label": null,
+          "agg_bounds": [
+            722.0,
+            112.0,
+            725.0,
+            124.0
+          ],
+          "victim_bounds": [
+            720.0,
+            110.0,
+            744.0,
+            126.0
+          ],
+          "instance_path": "analog_ip_top / COMP_INPUT / MOS_NMOS",
+          "instance_key": "COMP_INPUT@(700,80)/MOS_NMOS@(720,110)",
+          "block": "COMP_INPUT",
+          "overlap_area": 36.0,
+          "overlap_bounds": [
+            722.0,
+            112.0,
+            725.0,
+            124.0
+          ]
+        },
+        {
+          "rule": "poly_fill_over_input_diff",
+          "sensitivity": "high",
+          "why": "Dummy poly fill over the diffusion of one matched-pair member (and not the other) creates layout asymmetry \u2014 input-referred offset for the comparator.",
+          "aggressor_label": "POLY_FILL",
+          "victim_label": "diff",
+          "agg_index": 1,
+          "agg_route_label": null,
+          "agg_bounds": [
+            727.0,
+            112.0,
+            730.0,
+            124.0
+          ],
+          "victim_bounds": [
+            720.0,
+            110.0,
+            744.0,
+            126.0
+          ],
+          "instance_path": "analog_ip_top / COMP_INPUT / MOS_NMOS",
+          "instance_key": "COMP_INPUT@(700,80)/MOS_NMOS@(720,110)",
+          "block": "COMP_INPUT",
+          "overlap_area": 36.0,
+          "overlap_bounds": [
+            727.0,
+            112.0,
+            730.0,
+            124.0
+          ]
+        },
+        {
+          "rule": "poly_fill_over_input_diff",
+          "sensitivity": "high",
+          "why": "Dummy poly fill over the diffusion of one matched-pair member (and not the other) creates layout asymmetry \u2014 input-referred offset for the comparator.",
+          "aggressor_label": "POLY_FILL",
+          "victim_label": "diff",
+          "agg_index": 2,
+          "agg_route_label": null,
+          "agg_bounds": [
+            732.0,
+            112.0,
+            735.0,
+            124.0
+          ],
+          "victim_bounds": [
+            720.0,
+            110.0,
+            744.0,
+            126.0
+          ],
+          "instance_path": "analog_ip_top / COMP_INPUT / MOS_NMOS",
+          "instance_key": "COMP_INPUT@(700,80)/MOS_NMOS@(720,110)",
+          "block": "COMP_INPUT",
+          "overlap_area": 36.0,
+          "overlap_bounds": [
+            732.0,
+            112.0,
+            735.0,
+            124.0
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "rdl_over_poly",
+      "block": "ESD_IO",
+      "sensitivity": "medium",
+      "why": "RDL over poly resistor strings causes systematic offset; matched dividers especially vulnerable.",
+      "aggressor_label": "RDL",
+      "victim_label": "poly",
+      "agg_route_label": null,
+      "instance_path": "analog_ip_top / ESD_IO / ESD_CLAMP_NMOS",
+      "count": 2,
+      "total_overlap_area": 372.0,
+      "items": [
+        {
+          "rule": "rdl_over_poly",
+          "sensitivity": "medium",
+          "why": "RDL over poly resistor strings causes systematic offset; matched dividers especially vulnerable.",
+          "aggressor_label": "RDL",
+          "victim_label": "poly",
+          "agg_index": 1,
+          "agg_route_label": null,
+          "agg_bounds": [
+            85.0,
+            570.0,
+            120.0,
+            690.0
+          ],
+          "victim_bounds": [
+            104.0,
+            568.0,
+            107.0,
+            632.0
+          ],
+          "instance_path": "analog_ip_top / ESD_IO / ESD_CLAMP_NMOS",
+          "instance_key": "ESD_IO@(80,550)/ESD_CLAMP_NMOS@(100,570)",
+          "block": "ESD_IO",
+          "overlap_area": 186.0,
+          "overlap_bounds": [
+            104.0,
+            570.0,
+            107.0,
+            632.0
+          ]
+        },
+        {
+          "rule": "rdl_over_poly",
+          "sensitivity": "medium",
+          "why": "RDL over poly resistor strings causes systematic offset; matched dividers especially vulnerable.",
+          "aggressor_label": "RDL",
+          "victim_label": "poly",
+          "agg_index": 1,
+          "agg_route_label": null,
+          "agg_bounds": [
+            85.0,
+            570.0,
+            120.0,
+            690.0
+          ],
+          "victim_bounds": [
+            114.0,
+            568.0,
+            117.0,
+            632.0
+          ],
+          "instance_path": "analog_ip_top / ESD_IO / ESD_CLAMP_NMOS",
+          "instance_key": "ESD_IO@(80,550)/ESD_CLAMP_NMOS@(100,570)",
+          "block": "ESD_IO",
+          "overlap_area": 186.0,
+          "overlap_bounds": [
+            114.0,
+            570.0,
+            117.0,
+            632.0
+          ]
+        }
+      ]
+    }
+  ],
+  "raw_findings": [
+    {
+      "rule": "rdl_over_bjt_pair",
+      "sensitivity": "critical",
+      "why": "RDL crossing matched BJT pair (Q1/Q2) creates thermal asymmetry and piezo-stress, skewing Vbe and breaking the bandgap reference.",
+      "aggressor_label": "RDL",
+      "victim_label": "BJT_marker",
+      "agg_index": 0,
+      "agg_route_label": "RDL_VIN",
+      "agg_bounds": [
+        70.0,
+        135.0,
+        280.0,
+        155.0
+      ],
+      "victim_bounds": [
+        100.0,
+        140.0,
+        130.0,
+        170.0
+      ],
+      "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+      "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(100,140)",
+      "block": "BANDGAP_REF",
+      "overlap_area": 450.0,
+      "overlap_bounds": [
+        100.0,
+        140.0,
+        130.0,
+        155.0
+      ]
+    },
+    {
+      "rule": "rdl_over_bjt_pair",
+      "sensitivity": "critical",
+      "why": "RDL crossing matched BJT pair (Q1/Q2) creates thermal asymmetry and piezo-stress, skewing Vbe and breaking the bandgap reference.",
+      "aggressor_label": "RDL",
+      "victim_label": "BJT_marker",
+      "agg_index": 0,
+      "agg_route_label": "RDL_VIN",
+      "agg_bounds": [
+        70.0,
+        135.0,
+        280.0,
+        155.0
+      ],
+      "victim_bounds": [
+        150.0,
+        140.0,
+        180.0,
+        170.0
+      ],
+      "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+      "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(150,140)",
+      "block": "BANDGAP_REF",
+      "overlap_area": 450.0,
+      "overlap_bounds": [
+        150.0,
+        140.0,
+        180.0,
+        155.0
+      ]
+    },
+    {
+      "rule": "rdl_over_diff",
+      "sensitivity": "high",
+      "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+      "aggressor_label": "RDL",
+      "victim_label": "diff",
+      "agg_index": 0,
+      "agg_route_label": "RDL_VIN",
+      "agg_bounds": [
+        70.0,
+        135.0,
+        280.0,
+        155.0
+      ],
+      "victim_bounds": [
+        103.0,
+        143.0,
+        127.0,
+        167.0
+      ],
+      "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+      "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(100,140)",
+      "block": "BANDGAP_REF",
+      "overlap_area": 288.0,
+      "overlap_bounds": [
+        103.0,
+        143.0,
+        127.0,
+        155.0
+      ]
+    },
+    {
+      "rule": "rdl_over_diff",
+      "sensitivity": "high",
+      "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+      "aggressor_label": "RDL",
+      "victim_label": "diff",
+      "agg_index": 0,
+      "agg_route_label": "RDL_VIN",
+      "agg_bounds": [
+        70.0,
+        135.0,
+        280.0,
+        155.0
+      ],
+      "victim_bounds": [
+        112.0,
+        152.0,
+        118.0,
+        158.0
+      ],
+      "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+      "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(100,140)",
+      "block": "BANDGAP_REF",
+      "overlap_area": 18.0,
+      "overlap_bounds": [
+        112.0,
+        152.0,
+        118.0,
+        155.0
+      ]
+    },
+    {
+      "rule": "rdl_over_diff",
+      "sensitivity": "high",
+      "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+      "aggressor_label": "RDL",
+      "victim_label": "diff",
+      "agg_index": 0,
+      "agg_route_label": "RDL_VIN",
+      "agg_bounds": [
+        70.0,
+        135.0,
+        280.0,
+        155.0
+      ],
+      "victim_bounds": [
+        153.0,
+        143.0,
+        177.0,
+        167.0
+      ],
+      "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+      "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(150,140)",
+      "block": "BANDGAP_REF",
+      "overlap_area": 288.0,
+      "overlap_bounds": [
+        153.0,
+        143.0,
+        177.0,
+        155.0
+      ]
+    },
+    {
+      "rule": "rdl_over_diff",
+      "sensitivity": "high",
+      "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+      "aggressor_label": "RDL",
+      "victim_label": "diff",
+      "agg_index": 0,
+      "agg_route_label": "RDL_VIN",
+      "agg_bounds": [
+        70.0,
+        135.0,
+        280.0,
+        155.0
+      ],
+      "victim_bounds": [
+        162.0,
+        152.0,
+        168.0,
+        158.0
+      ],
+      "instance_path": "analog_ip_top / BANDGAP_REF / BJT_PNP",
+      "instance_key": "BANDGAP_REF@(80,120)/BJT_PNP@(150,140)",
+      "block": "BANDGAP_REF",
+      "overlap_area": 18.0,
+      "overlap_bounds": [
+        162.0,
+        152.0,
+        168.0,
+        155.0
+      ]
+    },
+    {
+      "rule": "rdl_over_diff",
+      "sensitivity": "high",
+      "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta \u2014 material on bond-pad side of die is also a moisture/handling risk.",
+      "aggressor_label": "RDL",
+      "victim_label": "diff",
+      "agg_index": 1,
+      "agg_route_label": null,
+      "agg_bounds": [
+        85.0,
+        570.0,
+        120.0,
+        690.0
+      ],
+      "victim_bounds": [
+        100.0,
+        570.0,
+        200.0,
+        630.0
+      ],
+      "instance_path": "analog_ip_top / ESD_IO / ESD_CLAMP_NMOS",
+      "instance_key": "ESD_IO@(80,550)/ESD_CLAMP_NMOS@(100,570)",
+      "block": "ESD_IO",
+      "overlap_area": 1200.0,
+      "overlap_bounds": [
+        100.0,
+        570.0,
+        120.0,
+        630.0
+      ]
+    },
+    {
+      "rule": "rdl_over_poly",
+      "sensitivity": "medium",
+      "why": "RDL over poly resistor strings causes systematic offset; matched dividers especially vulnerable.",
+      "aggressor_label": "RDL",
+      "victim_label": "poly",
+      "agg_index": 1,
+      "agg_route_label": null,
+      "agg_bounds": [
+        85.0,
+        570.0,
+        120.0,
+        690.0
+      ],
+      "victim_bounds": [
+        104.0,
+        568.0,
+        107.0,
+        632.0
+      ],
+      "instance_path": "analog_ip_top / ESD_IO / ESD_CLAMP_NMOS",
+      "instance_key": "ESD_IO@(80,550)/ESD_CLAMP_NMOS@(100,570)",
+      "block": "ESD_IO",
+      "overlap_area": 186.0,
+      "overlap_bounds": [
+        104.0,
+        570.0,
+        107.0,
+        632.0
+      ]
+    },
+    {
+      "rule": "rdl_over_poly",
+      "sensitivity": "medium",
+      "why": "RDL over poly resistor strings causes systematic offset; matched dividers especially vulnerable.",
+      "aggressor_label": "RDL",
+      "victim_label": "poly",
+      "agg_index": 1,
+      "agg_route_label": null,
+      "agg_bounds": [
+        85.0,
+        570.0,
+        120.0,
+        690.0
+      ],
+      "victim_bounds": [
+        114.0,
+        568.0,
+        117.0,
+        632.0
+      ],
+      "instance_path": "analog_ip_top / ESD_IO / ESD_CLAMP_NMOS",
+      "instance_key": "ESD_IO@(80,550)/ESD_CLAMP_NMOS@(100,570)",
+      "block": "ESD_IO",
+      "overlap_area": 186.0,
+      "overlap_bounds": [
+        114.0,
+        570.0,
+        117.0,
+        632.0
+      ]
+    },
+    {
+      "rule": "thick_metal_over_poly",
+      "sensitivity": "critical",
+      "why": "Thick high-current top metal over precision poly resistors heats them asymmetrically \u2014 feedback-divider mismatch shifts the regulated output.",
+      "aggressor_label": "MET_THICK",
+      "victim_label": "poly",
+      "agg_index": 0,
+      "agg_route_label": "M_LDO_out",
+      "agg_bounds": [
+        340.0,
+        120.0,
+        560.0,
+        150.0
+      ],
+      "victim_bounds": [
+        380.0,
+        120.0,
+        460.0,
+        124.0
+      ],
+      "instance_path": "analog_ip_top / LDO_REG / RES_POLY_80",
+      "instance_key": "LDO_REG@(350,100)/RES_POLY_80@(380,120)",
+      "block": "LDO_REG",
+      "overlap_area": 320.0,
+      "overlap_bounds": [
+        380.0,
+        120.0,
+        460.0,
+        124.0
+      ]
+    },
+    {
+      "rule": "thick_metal_over_poly",
+      "sensitivity": "critical",
+      "why": "Thick high-current top metal over precision poly resistors heats them asymmetrically \u2014 feedback-divider mismatch shifts the regulated output.",
+      "aggressor_label": "MET_THICK",
+      "victim_label": "poly",
+      "agg_index": 0,
+      "agg_route_label": "M_LDO_out",
+      "agg_bounds": [
+        340.0,
+        120.0,
+        560.0,
+        150.0
+      ],
+      "victim_bounds": [
+        380.0,
+        135.0,
+        460.0,
+        139.0
+      ],
+      "instance_path": "analog_ip_top / LDO_REG / RES_POLY_80",
+      "instance_key": "LDO_REG@(350,100)/RES_POLY_80@(380,135)",
+      "block": "LDO_REG",
+      "overlap_area": 320.0,
+      "overlap_bounds": [
+        380.0,
+        135.0,
+        460.0,
+        139.0
+      ]
+    },
+    {
+      "rule": "poly_fill_over_input_diff",
+      "sensitivity": "high",
+      "why": "Dummy poly fill over the diffusion of one matched-pair member (and not the other) creates layout asymmetry \u2014 input-referred offset for the comparator.",
+      "aggressor_label": "POLY_FILL",
+      "victim_label": "diff",
+      "agg_index": 0,
+      "agg_route_label": null,
+      "agg_bounds": [
+        722.0,
+        112.0,
+        725.0,
+        124.0
+      ],
+      "victim_bounds": [
+        720.0,
+        110.0,
+        744.0,
+        126.0
+      ],
+      "instance_path": "analog_ip_top / COMP_INPUT / MOS_NMOS",
+      "instance_key": "COMP_INPUT@(700,80)/MOS_NMOS@(720,110)",
+      "block": "COMP_INPUT",
+      "overlap_area": 36.0,
+      "overlap_bounds": [
+        722.0,
+        112.0,
+        725.0,
+        124.0
+      ]
+    },
+    {
+      "rule": "poly_fill_over_input_diff",
+      "sensitivity": "high",
+      "why": "Dummy poly fill over the diffusion of one matched-pair member (and not the other) creates layout asymmetry \u2014 input-referred offset for the comparator.",
+      "aggressor_label": "POLY_FILL",
+      "victim_label": "diff",
+      "agg_index": 1,
+      "agg_route_label": null,
+      "agg_bounds": [
+        727.0,
+        112.0,
+        730.0,
+        124.0
+      ],
+      "victim_bounds": [
+        720.0,
+        110.0,
+        744.0,
+        126.0
+      ],
+      "instance_path": "analog_ip_top / COMP_INPUT / MOS_NMOS",
+      "instance_key": "COMP_INPUT@(700,80)/MOS_NMOS@(720,110)",
+      "block": "COMP_INPUT",
+      "overlap_area": 36.0,
+      "overlap_bounds": [
+        727.0,
+        112.0,
+        730.0,
+        124.0
+      ]
+    },
+    {
+      "rule": "poly_fill_over_input_diff",
+      "sensitivity": "high",
+      "why": "Dummy poly fill over the diffusion of one matched-pair member (and not the other) creates layout asymmetry \u2014 input-referred offset for the comparator.",
+      "aggressor_label": "POLY_FILL",
+      "victim_label": "diff",
+      "agg_index": 2,
+      "agg_route_label": null,
+      "agg_bounds": [
+        732.0,
+        112.0,
+        735.0,
+        124.0
+      ],
+      "victim_bounds": [
+        720.0,
+        110.0,
+        744.0,
+        126.0
+      ],
+      "instance_path": "analog_ip_top / COMP_INPUT / MOS_NMOS",
+      "instance_key": "COMP_INPUT@(700,80)/MOS_NMOS@(720,110)",
+      "block": "COMP_INPUT",
+      "overlap_area": 36.0,
+      "overlap_bounds": [
+        732.0,
+        112.0,
+        735.0,
+        124.0
+      ]
+    },
+    {
+      "rule": "digital_signal_near_hi_z",
+      "sensitivity": "high",
+      "why": "Switching digital signal parallel to a high-impedance oscillator/tank node injects noise via parasitic capacitance \u2014 phase noise and pulling.",
+      "aggressor_label": "MET2 (digital)",
+      "victim_label": "HI_Z node",
+      "agg_index": 0,
+      "agg_route_label": "CLK_DIG",
+      "agg_bounds": [
+        970.0,
+        170.0,
+        1095.0,
+        174.0
+      ],
+      "victim_bounds": [
+        980.0,
+        160.0,
+        1100.0,
+        192.0
+      ],
+      "instance_path": "analog_ip_top / OSC_LC / IND_POLY",
+      "instance_key": "OSC_LC@(950,120)/IND_POLY@(980,160)",
+      "block": "OSC_LC",
+      "overlap_area": 460.0,
+      "overlap_bounds": [
+        980.0,
+        170.0,
+        1095.0,
+        174.0
+      ]
+    }
+  ]
+}

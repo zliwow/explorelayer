@@ -1,0 +1,62 @@
+{
+  "_comment": "Generalized aggressor->victim rules. Each rule fires when a polygon on `aggressor` overlaps a polygon on `victim`. Sensitivity drives sort order in the report.",
+
+  "rules": [
+    {
+      "name": "rdl_over_bjt_pair",
+      "aggressor": [50, 0],
+      "aggressor_label": "RDL",
+      "victim": [82, 5],
+      "victim_label": "BJT_marker",
+      "sensitivity": "critical",
+      "why": "RDL crossing matched BJT pair (Q1/Q2) creates thermal asymmetry and piezo-stress, skewing Vbe and breaking the bandgap reference."
+    },
+    {
+      "name": "rdl_over_diff",
+      "aggressor": [50, 0],
+      "aggressor_label": "RDL",
+      "victim": [1, 0],
+      "victim_label": "diff",
+      "sensitivity": "high",
+      "why": "RDL over active diffusion induces piezo-stress shifts in threshold/beta — material on bond-pad side of die is also a moisture/handling risk."
+    },
+    {
+      "name": "rdl_over_poly",
+      "aggressor": [50, 0],
+      "aggressor_label": "RDL",
+      "victim": [5, 0],
+      "victim_label": "poly",
+      "sensitivity": "medium",
+      "why": "RDL over poly resistor strings causes systematic offset; matched dividers especially vulnerable."
+    },
+    {
+      "name": "thick_metal_over_poly",
+      "aggressor": [40, 0],
+      "aggressor_label": "MET_THICK",
+      "victim": [5, 0],
+      "victim_label": "poly",
+      "sensitivity": "critical",
+      "why": "Thick high-current top metal over precision poly resistors heats them asymmetrically — feedback-divider mismatch shifts the regulated output."
+    },
+    {
+      "name": "poly_fill_over_input_diff",
+      "aggressor": [6, 0],
+      "aggressor_label": "POLY_FILL",
+      "victim": [1, 0],
+      "victim_label": "diff",
+      "sensitivity": "high",
+      "why": "Dummy poly fill over the diffusion of one matched-pair member (and not the other) creates layout asymmetry — input-referred offset for the comparator."
+    },
+    {
+      "name": "digital_signal_near_hi_z",
+      "aggressor": [22, 0],
+      "aggressor_label": "MET2 (digital)",
+      "victim": [90, 0],
+      "victim_label": "HI_Z node",
+      "sensitivity": "high",
+      "why": "Switching digital signal parallel to a high-impedance oscillator/tank node injects noise via parasitic capacitance — phase noise and pulling."
+    }
+  ],
+
+  "min_overlap_area": 0.5
+}

@@ -1,0 +1,52 @@
+{
+  "_about": "Hand-authored Claude responses for the complex_chip demo. Each entry is keyed by (rule, block). The renderer matches findings to entries; unmatched findings get a generic fallback. The 'cluster_with' field tells the renderer to fold this finding into another card so duplicates don't pad the report.",
+
+  "summary": "Six raw findings cluster into four real layout issues plus one expected pad route. The bandgap reference, the LDO feedback divider, the comparator input pair, and the LC oscillator each have a different physical mechanism breaking them — they want different fixes, not one blanket rule. The ESD-pad RDL is the planted false positive; flagging it as critical would burn reviewer trust.",
+
+  "findings": {
+    "rdl_over_bjt_pair__BANDGAP_REF": {
+      "headline": "BANDGAP: RDL strip over Q1/Q2 — kills the matched-pair assumption",
+      "severity": "critical",
+      "body": "RDL_VIN crosses both Q1 and Q2 at y=140-155. The bandgap relies on Q1 and Q2 seeing identical mechanical and thermal environments; an asymmetric copper-density slab above the pair breaks that on three fronts:\n\n  - Thermal: copper has ~400x the thermal conductivity of oxide. The transistor under more RDL heatsinks faster, so under load the dVbe(Q1)-dVbe(Q2) term that sets the bandgap voltage drifts.\n  - Piezo-stress: thick top metal contracts during cooldown after assembly, biasing carrier mobility unevenly. Vbe matching budgets are typically 1-2 mV; expect 5-10 mV degradation here.\n  - Capacitive injection: anything switching on RDL_VIN couples directly into the high-impedance bandgap nodes.\n\nFix: route RDL_VIN around the BANDGAP_REF block envelope, or insert a metN ground plane between the BJT pair and the RDL.",
+      "evidence_quote": "+ XQ1 vssa bg_base bg_e1 BJT_PNP   $ matched pair\n+ XQ2 vssa bg_base bg_e2 BJT_PNP   $ matched pair"
+    },
+
+    "rdl_over_diff__BANDGAP_REF": {
+      "_cluster_note": "Same RDL strip as rdl_over_bjt_pair__BANDGAP_REF — the diff hits are inside the BJT collector regions. One root cause, one fix.",
+      "cluster_with": "rdl_over_bjt_pair__BANDGAP_REF"
+    },
+
+    "thick_metal_over_poly__LDO_REG": {
+      "headline": "LDO: M_LDO_out current rail over the feedback divider",
+      "severity": "critical",
+      "body": "M_LDO_out (40/0, 'thick' top metal) crosses both R_fb_top and R_fb_bot at y=120-150. This rail carries the LDO output current — under load the joule heating is non-negligible and the divider sits directly under the hottest part of it.\n\nWhy it matters: the LDO regulates Vout = Vref * (1 + R_top/R_bot). If R_top heats more than R_bot (or vice versa) the divider ratio drifts, so the regulated output drifts. Poly resistors have ~0.1-0.3%/C TCR and ~10x mismatch sensitivity vs. the absolute term, so even 5C of imbalance shows up as a mV-class line/load step.\n\nFix: detour M_LDO_out around the divider, or split the rail into matched halves above each resistor symmetrically. Do NOT 'just shield it' — a shield doesn't fix the thermal gradient.",
+      "evidence_quote": "+ XR_fb_top vout vfb RES_POLY   $ precision divider, matched\n+ XR_fb_bot vfb vssa RES_POLY   $ precision divider, matched"
+    },
+
+    "poly_fill_over_input_diff__COMP_INPUT": {
+      "headline": "COMPARATOR: dummy poly fill over Mi_p only — not Mi_n",
+      "severity": "high",
+      "body": "Three poly_fill stripes sit over the diffusion of Mi_p. There is no equivalent fill over Mi_n. This is a textbook layout-symmetry break: the input pair must be electrically and physically identical for the comparator to have low input-referred offset.\n\nConsequences:\n  - Asymmetric poly density above the channel changes mechanical stress on the Si lattice, shifting Vth on Mi_p relative to Mi_n by ~mV.\n  - Asymmetric capacitance to neighboring nets injects asymmetric charge during switching.\n\nThis is a fill-tool problem, not a routing problem. Fix at the source: either run fill on both devices identically, or place keep-out around the entire matched-pair region and let the tool fill outside the boundary.",
+      "evidence_quote": "+ XMi_p inp vgate n_src vssa MOS_NMOS   $ matched input pair\n+ XMi_n inn vgate n_src vssa MOS_NMOS   $ matched input pair"
+    },
+
+    "digital_signal_near_hi_z__OSC_LC": {
+      "headline": "OSCILLATOR: CLK_DIG runs straight across the LC tank node, unshielded",
+      "severity": "high",
+      "body": "A met2 line labeled CLK_DIG crosses the L_tank inductor footprint with no ground shield in between. The tank is a high-Q, high-impedance node — capacitive injection from a switching digital signal will pull the oscillation frequency in step with whatever clock is on that line.\n\nExpected symptoms: spurs at the digital frequency in the OSC output spectrum, jitter correlated to the digital domain, and (worst case) injection-locking if the digital activity has any harmonic content near the tank frequency.\n\nFix: route CLK_DIG on a different layer outside the OSC_LC envelope, or put a continuous metN ground shield between met2 and the inductor. Shielding alone is acceptable here; the issue is electrical, not thermal.",
+      "evidence_quote": "+ XL_tank vtank vdda IND_POLY   $ high-Z tank node"
+    },
+
+    "rdl_over_diff__ESD_IO": {
+      "headline": "ESD pad routing — expected, NOT an issue",
+      "severity": "false_positive",
+      "body": "The RDL strap from PAD_VDD down to the ESD_CLAMP_NMOS is the intended bond-pad-to-clamp connection. Every IO pad in this design will trip this rule because that's literally what RDL is for at IO sites.\n\nDo not file. If the detector is producing this in a real review, suppress it by either (a) excluding the ESD_IO cell from the rdl_over_diff rule, or (b) requiring the overlap to be outside any cell tagged as a pad/ESD block.",
+      "evidence_quote": "+ XM_clamp pad vssa vssa vssa ESD_CLAMP_NMOS"
+    },
+
+    "rdl_over_poly__ESD_IO": {
+      "_cluster_note": "Same expected pad routing as rdl_over_diff__ESD_IO. Suppress together.",
+      "cluster_with": "rdl_over_diff__ESD_IO"
+    }
+  }
+}

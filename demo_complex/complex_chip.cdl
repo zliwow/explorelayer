@@ -1,0 +1,32 @@
+* complex_chip.cdl — matching netlist for the complex demo
+
+.SUBCKT BANDGAP_REF vbg vdda vssa
++ XQ1 vssa bg_base bg_e1 BJT_PNP   $ matched pair
++ XQ2 vssa bg_base bg_e2 BJT_PNP   $ matched pair
++ XR1 bg_e2 bg_res_a RES_POLY
++ XR2 bg_res_a bg_res_b RES_POLY
++ XR3 bg_res_b vssa RES_POLY
+.ENDS
+
+.SUBCKT LDO_REG vout vref vfb vdda vssa
++ XM_pass vout vg_pass vdda vdda PMOS_PASS
++ XR_fb_top vout vfb RES_POLY   $ precision divider, matched
++ XR_fb_bot vfb vssa RES_POLY   $ precision divider, matched
+.ENDS
+
+.SUBCKT COMP_INPUT inp inn out vdda vssa
++ XMi_p inp vgate n_src vssa MOS_NMOS   $ matched input pair
++ XMi_n inn vgate n_src vssa MOS_NMOS   $ matched input pair
++ XMtail n_src vbias vssa vssa MOS_NMOS
+.ENDS
+
+.SUBCKT OSC_LC vtank vout vdda vssa
++ XL_tank vtank vdda IND_POLY   $ high-Z tank node
++ XM_buf  vtank vout vdda vssa MOS_NMOS
+.ENDS
+
+.SUBCKT ESD_IO pad core vssa
++ XM_clamp pad vssa vssa vssa ESD_CLAMP_NMOS
+.ENDS
+
+.END
