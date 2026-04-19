@@ -28,14 +28,15 @@ TOP_N_PER_TIER = 10
 # ── LLM plumbing (Qwen / OpenAI-compatible) ─────────────────────────────
 
 LLM_SYSTEM = (
-    "You are an IC packaging and layout reliability reviewer. "
-    "You will be given the output of a hierarchy-aware overlap detector "
-    "run on a real power-management chip. Be calibrated: metal under "
-    "pads is normal routing in power ICs — not every flagged finding is "
-    "a real risk. Write a review in plain prose, organized by tier "
-    "(high → medium → low), pointing out which findings are worth a "
-    "human's time and which are geometric noise. No markdown headers, "
-    "no bullets, no preamble — start with the analysis directly."
+    "You are an IC packaging and layout reliability reviewer. You will "
+    "be given ONE finding at a time from a hierarchy-aware overlap "
+    "detector run on a real power-management chip. Be calibrated: metal "
+    "routing under pads is normal in power ICs — not every flagged "
+    "overlap is a real risk. In 2-3 short sentences, say (a) whether "
+    "this is a real reliability risk or likely geometric noise, (b) the "
+    "physical mechanism if it IS a risk, and (c) one concrete thing the "
+    "designer should check. No preamble, no headers, no bullets — start "
+    "with the assessment directly."
 )
 
 
@@ -151,86 +152,84 @@ def write_report_md(data, out_path):
 
 # ── LLM prompt ──────────────────────────────────────────────────────────
 
-def build_llm_prompt(data, max_groups_per_tier=8):
-    summary = data.get("summary", {})
+def build_finding_prompt(g, chip_name):
+    owner = g.get("owner_path") or "(unresolved)"
+    reasons = ", ".join(g.get("severity_reasons") or []) or "—"
+    sub = g.get("subckt_match")
+    lines = [
+        f"Chip: {chip_name}",
+        f"Severity tier: {g['severity_tier']}",
+        f"Owner path: {owner}",
+        f"Check layer: {g['check_layer']}",
+        f"Overlap count: {g['count']}",
+        f"Total overlap area: {g['total_overlap_area']:.1f}",
+        f"Severity reasons (pattern matches): {reasons}",
+    ]
+    if sub:
+        lines.append(f"Subckt match in netlist: {sub}")
+    lines.append("")
+    lines.append("Write the 2-3 sentence assessment now.")
+    return "\n".join(lines)
+
+
+def group_header(i, g):
+    owner = g.get("owner_path") or "(unresolved)"
+    leaf = owner.rsplit("/", 1)[-1] if "/" in owner else owner
+    return (f"### {g['severity_tier'].upper()} #{i}: `{leaf}` — "
+            f"{g['check_layer']}  (count={g['count']}, "
+            f"area={g['total_overlap_area']:.1f})")
+
+
+def write_analysis_md(data, out_path, llm_url, llm_model, max_findings):
     groups = data.get("groups", [])
-    by_tier = {"high": [], "medium": [], "low": [], "info": []}
-    for g in groups:
-        by_tier.setdefault(g["severity_tier"], []).append(g)
-
-    out = []
-    out.append(f"Chip: {data.get('gds_file', '(unknown)')}")
-    out.append(f"Top cell: {data.get('cell', '(unknown)')}")
-    counts = summary.get("tier_counts_grouped") or {}
-    out.append(
-        "Tier distribution (groups): "
-        f"high={counts.get('high', 0)} "
-        f"medium={counts.get('medium', 0)} "
-        f"low={counts.get('low', 0)} "
-        f"info={counts.get('info', 0)}"
-    )
-    out.append("")
-
+    # Keep only tiers we actually review, in order
+    tiered = []
     for tier in ["high", "medium", "low"]:
-        tgroups = by_tier.get(tier, [])
-        if not tgroups:
-            continue
-        out.append(f"# {tier.upper()} findings "
-                   f"(showing top {min(max_groups_per_tier, len(tgroups))} of {len(tgroups)})")
-        for i, g in enumerate(tgroups[:max_groups_per_tier], 1):
-            owner = g.get("owner_path") or "(unresolved)"
-            reasons = ", ".join(g.get("severity_reasons") or []) or "—"
-            sub = g.get("subckt_match")
-            out.append(
-                f"  {i}. owner={owner}  layer={g['check_layer']}  "
-                f"count={g['count']}  area={g['total_overlap_area']:.1f}  "
-                f"reasons={reasons}" + (f"  subckt={sub}" if sub else "")
-            )
-        out.append("")
+        for g in groups:
+            if g["severity_tier"] == tier:
+                tiered.append(g)
+    if max_findings and len(tiered) > max_findings:
+        print(f"  capping LLM pass at {max_findings} findings "
+              f"(of {len(tiered)} total non-info groups)")
+        tiered = tiered[:max_findings]
 
-    info_n = len(by_tier.get("info", []))
-    if info_n:
-        out.append(f"# INFO tier: {info_n} groups, not listed. These are "
-                   "pad-over-routed-metal hits on cells without a sensitive "
-                   "name pattern (generic routing).")
-        out.append("")
-
-    out.append(
-        "Write the review now. For each tier, call out which specific "
-        "findings deserve a designer's attention and which are probably "
-        "fine. Be specific — quote the owner path or cell leaf name so a "
-        "reader can grep the layout. End with one short paragraph on "
-        "overall layout health."
-    )
-    return "\n".join(out)
-
-
-def write_analysis_md(data, out_path, llm_url, llm_model):
-    prompt = build_llm_prompt(data)
     model = llm_model or discover_model(llm_url)
-    if not model:
-        with open(out_path, "w") as f:
-            f.write("# LLM Risk Assessment\n\n")
-            f.write("_LLM server not reachable. Skipped._\n")
-        print(f"  analysis.md: server not reachable -> stub written")
-        return
+    chip_name = data.get("gds_file", "(unknown)")
 
-    print(f"  Calling LLM {llm_url}  model={model} ...", end="", flush=True)
-    text = call_llm(prompt, llm_url, model)
-    if not text:
-        print(" failed")
-        with open(out_path, "w") as f:
-            f.write("# LLM Risk Assessment\n\n_LLM call failed._\n")
-        return
-
-    print(" ok")
+    # Open output file and write incrementally — if the pass dies halfway
+    # you still have partial analysis on disk.
     with open(out_path, "w") as f:
-        f.write(f"# LLM Risk Assessment\n\n")
+        f.write("# LLM Risk Assessment — per-finding\n\n")
+        f.write(f"**Chip:** {chip_name}\n\n")
+        if not model:
+            f.write("_LLM server not reachable — no per-finding analysis._\n")
+            print("  analysis.md: server not reachable -> stub written")
+            return
         f.write(f"**Model:** {model}\n\n")
-        f.write(f"**Chip:** {data.get('gds_file', '(unknown)')}\n\n")
+        f.write(f"**Findings reviewed:** {len(tiered)} "
+                f"(high → medium → low)\n\n")
         f.write("---\n\n")
-        f.write(text)
-        f.write("\n")
+        f.flush()
+
+        current_tier = None
+        for i, g in enumerate(tiered, 1):
+            if g["severity_tier"] != current_tier:
+                current_tier = g["severity_tier"]
+                f.write(f"\n## {current_tier.upper()} tier\n\n")
+            f.write(group_header(i, g) + "\n\n")
+
+            prompt = build_finding_prompt(g, chip_name)
+            print(f"  [{i}/{len(tiered)}] {current_tier:6s} "
+                  f"{(g.get('owner_path') or '')[-70:]} ...",
+                  end="", flush=True)
+            text = call_llm(prompt, llm_url, model)
+            if text:
+                print(" ok")
+                f.write(text + "\n\n")
+            else:
+                print(" failed")
+                f.write("_LLM call failed for this finding._\n\n")
+            f.flush()
 
 
 # ── Main ────────────────────────────────────────────────────────────────
@@ -245,6 +244,8 @@ def main():
     p.add_argument("--llm-url", default="http://localhost:8000")
     p.add_argument("--llm-model", default=None,
                    help="Default: auto-discover from /v1/models.")
+    p.add_argument("--max-findings", type=int, default=40,
+                   help="Cap per-finding LLM calls. Default 40.")
     args = p.parse_args()
 
     with open(args.findings_json) as f:
@@ -259,7 +260,8 @@ def main():
 
     if not args.no_llm:
         analysis_path = os.path.join(out_dir, "analysis.md")
-        write_analysis_md(data, analysis_path, args.llm_url, args.llm_model)
+        write_analysis_md(data, analysis_path, args.llm_url, args.llm_model,
+                          args.max_findings)
         print(f"Wrote {analysis_path}")
 
 
