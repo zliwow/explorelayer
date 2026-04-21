@@ -16,13 +16,13 @@ the model id from `/v1/models`. Output: `demo_complex/complex_report_qwen.png`.
 
 ## Reference (Claude, cached)
 
-`claude_complex_report.png` at the repo root is the Claude-authored
+`demo_complex/complex_report_claude.png` is the Claude-authored
 reference, generated from `demo_complex/claude_responses.json`.
 
 To regenerate:
 
 ```
-python run_complex_demo.py --backend claude --copy-to ./claude_complex_report.png
+python run_complex_demo.py --backend claude
 ```
 
 ## What's planted
