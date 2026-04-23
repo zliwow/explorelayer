@@ -10,21 +10,25 @@ endpoint at http://localhost:8000/v1, and writes semantics.json:
                     evidence. Input: chip + layers + layer_pair_overlaps
                     + per-layer unique label texts.
 
-  2B  cells         (scaffolded, not yet wired) per-top-cell role
-                    (bandgap, LDO, comparator, oscillator, …) with
-                    confidence + evidence.
+  2B  cells         per-top-cell functional role (bandgap, LDO, comparator,
+                    oscillator, buck, digital, memory, I/O, ESD, …) with
+                    confidence + evidence. Input: top cells (children,
+                    parents, deep polys) + 2A output for context.
 
-  2C  candidates    (scaffolded, not yet wired) aggressor→victim triples
-                    worth deterministic checking in stage 3.
+  2C  candidates    aggressor→victim triples worth deterministic checking
+                    in stage 3 (e.g., RDL over BJT-marker inside bandgap).
+                    Input: 2A + 2B + layer-pair overlaps + known mechanism
+                    patterns.
 
 Each section is a separate LLM call so the full context stays focused
 and well under Qwen's 131k budget. Sections are cached to semantics.json
-incrementally — rerunning re-does only what's requested.
+incrementally — rerunning re-does only what's requested. Default runs
+the full 2A → 2B → 2C chain in one invocation.
 
 Usage:
     python demo_v5/stage2_reasoner.py demo_v5/extraction.json
     python demo_v5/stage2_reasoner.py demo_v5/extraction.json --sections 2a
-    python demo_v5/stage2_reasoner.py demo_v5/extraction.json --output demo_v5/semantics.json
+    python demo_v5/stage2_reasoner.py demo_v5/extraction.json --sections 2a,2b,2c
     python demo_v5/stage2_reasoner.py demo_v5/extraction.json --llm-url http://localhost:8000
 """
 
@@ -52,7 +56,14 @@ def discover_model(base_url, timeout=5):
 
 
 def call_llm(system_prompt, user_prompt, base_url, model,
-             temperature=0.1, max_tokens=4000, timeout=600):
+             temperature=0.1, max_tokens=65000, timeout=3600,
+             force_json=True):
+    """
+    Call Qwen3 with thinking ENABLED. Budget is generous because we own the
+    endpoint and only care about the 131k context window, not runtime.
+    Qwen3 returns chain-of-thought in `reasoning_content` and the final JSON
+    in `content`; we prefer `content` so callers get the answer, not the CoT.
+    """
     endpoint = base_url.rstrip("/") + "/v1/chat/completions"
     body = {
         "model": model,
@@ -63,13 +74,36 @@ def call_llm(system_prompt, user_prompt, base_url, model,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    if force_json:
+        body["response_format"] = {"type": "json_object"}
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(endpoint, data=data,
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # Some servers reject response_format — retry without it
+        if force_json and e.code == 400:
+            body.pop("response_format", None)
+            data = json.dumps(body).encode("utf-8")
+            req = urllib.request.Request(endpoint, data=data,
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        else:
+            raise
     msg = payload["choices"][0]["message"]
-    return msg.get("content") or msg.get("reasoning_content") or ""
+    finish = payload["choices"][0].get("finish_reason")
+    content = (msg.get("content") or "").strip()
+    reasoning = (msg.get("reasoning_content") or "").strip()
+    if finish == "length":
+        print(f"  !! finish_reason=length — model hit max_tokens={max_tokens:,}. "
+              f"content={len(content)} chars, reasoning={len(reasoning)} chars.",
+              file=sys.stderr)
+    # Prefer the final answer; fall back to reasoning only if content is empty
+    # (which means the model ran out of tokens mid-think).
+    return content or reasoning
 
 
 def strip_thinking(text):
@@ -208,10 +242,218 @@ def run_section_2a(extraction, base_url, model):
     print(f"  [2A] prompt: {len(user_prompt):,} chars "
           f"(~{n_tokens_approx:,} tokens)")
     t0 = time.time()
-    result, raw = call_llm_json(SECTION_2A_SYSTEM, user_prompt, base_url, model,
-                                max_tokens=8000)
+    result, raw = call_llm_json(SECTION_2A_SYSTEM, user_prompt, base_url, model)
     dt = time.time() - t0
     print(f"  [2A] LLM returned in {dt:.1f}s")
+    if result is None:
+        return {"error": "LLM did not return valid JSON", "raw": raw[:2000]}
+    return result
+
+
+# ── Section 2B: cell functional roles ───────────────────────────────────
+
+SECTION_2B_SYSTEM = """You are an IC block-level functional classifier. You read cell hierarchy and layer context and identify the functional role of each top-level block.
+
+Roles to consider: bandgap_reference, LDO, comparator, oscillator, buck_converter, boost_converter, charge_pump, digital, memory, io_pad, esd, bias_generator, reference, analog_mux, matched_pair_cell, level_shifter, opamp, power_switch, unknown.
+
+Rules:
+- Reason from EVIDENCE: cell name tokens (BG/BANDGAP/VBG → bandgap; LDO/VREG → LDO; OSC/VCO → oscillator; BUCK/SW → buck; CMP/COMP → comparator; DIG/LOGIC → digital; PAD/IO → I/O; ESD → ESD), children names, n_instances (≥2 with same child → matched pair), deep polygon count (big analog blocks are 10k-100k polys; digital is often 100k+; small cells <1k polys are leaf devices).
+- Tokens are strong evidence but not definitive — weigh them against children and n_instances.
+- Section 2A output gives you which layers are RDL/BJT_marker/diff/poly — use that to interpret children.
+- If unsure, set role='unknown' and say so — do NOT guess.
+- Output MUST be a single JSON object, no prose before or after, no markdown fences.
+"""
+
+SECTION_2B_USER_TEMPLATE = """Classify the functional role of each top cell in this GDS.
+
+# CHIP
+{chip}
+
+# SECTION 2A LAYER SEMANTICS (for context)
+{semantics_2a}
+
+# TOP CELLS (ranked by deep polygon count)
+{cells}
+
+Respond with a single JSON object in this exact shape:
+
+{{
+  "cells": [
+    {{
+      "name": "CELL_NAME",
+      "role": "bandgap_reference | LDO | comparator | oscillator | buck_converter | charge_pump | digital | memory | io_pad | esd | bias_generator | matched_pair_cell | unknown",
+      "confidence": "high | medium | low",
+      "evidence": "one sentence citing specific name tokens, children, or instance counts",
+      "alternatives": ["other roles considered with brief reason, may be empty"]
+    }}
+  ],
+  "summary": {{
+    "bandgap_cells": ["names of cells classified as bandgap_reference"],
+    "ldo_cells": ["names of cells classified as LDO"],
+    "oscillator_cells": ["names of cells classified as oscillator"],
+    "matched_pair_cells": ["names of cells with high-instance-count matched-pair children"],
+    "notes": "any caveats or ambiguities in one sentence"
+  }}
+}}
+"""
+
+
+def build_2b_input(extraction, semantics_2a):
+    chip = extraction["chip"]
+    cells = []
+    for c in extraction.get("cells", [])[:40]:
+        cells.append({
+            "name": c["name"],
+            "own_polys": c.get("own_polys", 0),
+            "deep_polys": c.get("deep_polys", 0),
+            "n_instances": c.get("n_instances", 0),
+            "n_children": c.get("n_children", 0),
+            "n_parents": c.get("n_parents", 0),
+            "children": c.get("children", [])[:15],
+            "parents": c.get("parents", [])[:8],
+            "is_top": c.get("is_top", False),
+        })
+
+    # Slim 2A down to just the summary + role classification for context
+    slim_2a = {
+        "summary": (semantics_2a or {}).get("summary", {}),
+        "layers": [
+            {"id": l.get("id"), "role": l.get("role"),
+             "confidence": l.get("confidence")}
+            for l in (semantics_2a or {}).get("layers", [])
+        ],
+    }
+    return chip, cells, slim_2a
+
+
+def run_section_2b(extraction, semantics_2a, base_url, model):
+    chip, cells, slim_2a = build_2b_input(extraction, semantics_2a)
+    user_prompt = SECTION_2B_USER_TEMPLATE.format(
+        chip=json.dumps(chip, indent=2),
+        semantics_2a=json.dumps(slim_2a, indent=2),
+        cells=json.dumps(cells, indent=2),
+    )
+
+    n_tokens_approx = len(user_prompt) // 4
+    print(f"  [2B] prompt: {len(user_prompt):,} chars "
+          f"(~{n_tokens_approx:,} tokens)")
+    t0 = time.time()
+    result, raw = call_llm_json(SECTION_2B_SYSTEM, user_prompt, base_url, model)
+    dt = time.time() - t0
+    print(f"  [2B] LLM returned in {dt:.1f}s")
+    if result is None:
+        return {"error": "LLM did not return valid JSON", "raw": raw[:2000]}
+    return result
+
+
+# ── Section 2C: issue-area candidates ───────────────────────────────────
+
+SECTION_2C_SYSTEM = """You are an IC layout reliability analyst. You propose aggressor->victim layer pairs worth deterministic checking in stage 3, targeting specific functional blocks.
+
+Known analog mechanism patterns (use these as templates):
+1. rdl_over_bjt_pair (CRITICAL): RDL crossing matched BJT pair (Q1/Q2) creates thermal asymmetry and piezo-stress, skewing Vbe and breaking the bandgap reference.
+2. rdl_over_diff (HIGH): RDL over active diffusion induces piezo-stress shifts in threshold/beta.
+3. rdl_over_poly (MEDIUM): RDL over poly resistor strings causes systematic offset; matched dividers especially vulnerable.
+4. thick_metal_over_poly (CRITICAL): Thick high-current top metal over precision poly resistors heats them asymmetrically; LDO feedback-divider mismatch shifts output.
+5. poly_fill_over_input_diff (HIGH): Dummy poly fill over one matched-pair member creates asymmetry; comparator input-referred offset.
+6. digital_signal_near_hi_z (HIGH): Switching digital metal parallel to hi-Z oscillator tank node injects noise via parasitic capacitance.
+
+Rules:
+- Propose triples only when there's POSITIVE evidence from 2A (layer roles), 2B (cell roles), and layer-pair overlaps.
+- Each triple must name a concrete aggressor layer, victim layer, target cells (the blocks where the pattern matters), mechanism (one of the six above or a close variant), and severity.
+- If no overlap evidence supports a pattern, SKIP it. Do not hallucinate coverage.
+- Output MUST be a single JSON object, no prose before or after, no markdown fences.
+"""
+
+SECTION_2C_USER_TEMPLATE = """Propose aggressor->victim check candidates for stage 3.
+
+# CHIP
+{chip}
+
+# SECTION 2A LAYER SEMANTICS
+{semantics_2a}
+
+# SECTION 2B CELL ROLES
+{semantics_2b}
+
+# LAYER-PAIR OVERLAPS (top by intersection area)
+{overlaps}
+
+# MATCHED-PAIR CANDIDATES (cells with n_instances >= 2)
+{matched_pairs}
+
+Respond with a single JSON object in this exact shape:
+
+{{
+  "candidates": [
+    {{
+      "mechanism": "rdl_over_bjt_pair | rdl_over_diff | rdl_over_poly | thick_metal_over_poly | poly_fill_over_input_diff | digital_signal_near_hi_z | other",
+      "aggressor_layer": "LAYER/DATATYPE",
+      "victim_layer": "LAYER/DATATYPE",
+      "target_cells": ["cell names where this pattern should be checked"],
+      "severity": "critical | high | medium | low",
+      "supporting_overlap_um2": "numeric or null, from the overlaps input if available",
+      "reasoning": "one-to-two sentence citation of 2A layer roles, 2B cell roles, and overlap evidence"
+    }}
+  ],
+  "summary": {{
+    "n_candidates": 0,
+    "critical_candidates": 0,
+    "notes": "any caveats or coverage gaps in one sentence"
+  }}
+}}
+"""
+
+
+def build_2c_input(extraction, semantics_2a, semantics_2b):
+    chip = extraction["chip"]
+    overlaps = extraction.get("layer_pair_overlaps", [])[:25]
+    matched_pairs = [
+        {"name": c["name"],
+         "n_instances": c.get("n_instances", 0),
+         "deep_polys": c.get("deep_polys", 0),
+         "parents": c.get("parents", [])[:5]}
+        for c in extraction.get("cells", [])
+        if c.get("n_instances", 0) >= 2
+    ][:30]
+
+    slim_2a = {
+        "summary": (semantics_2a or {}).get("summary", {}),
+        "layers": [
+            {"id": l.get("id"), "role": l.get("role"),
+             "confidence": l.get("confidence")}
+            for l in (semantics_2a or {}).get("layers", [])
+        ],
+    }
+    slim_2b = {
+        "summary": (semantics_2b or {}).get("summary", {}),
+        "cells": [
+            {"name": c.get("name"), "role": c.get("role"),
+             "confidence": c.get("confidence")}
+            for c in (semantics_2b or {}).get("cells", [])
+        ],
+    }
+    return chip, slim_2a, slim_2b, overlaps, matched_pairs
+
+
+def run_section_2c(extraction, semantics_2a, semantics_2b, base_url, model):
+    chip, slim_2a, slim_2b, overlaps, matched_pairs = build_2c_input(
+        extraction, semantics_2a, semantics_2b)
+    user_prompt = SECTION_2C_USER_TEMPLATE.format(
+        chip=json.dumps(chip, indent=2),
+        semantics_2a=json.dumps(slim_2a, indent=2),
+        semantics_2b=json.dumps(slim_2b, indent=2),
+        overlaps=json.dumps(overlaps, indent=2),
+        matched_pairs=json.dumps(matched_pairs, indent=2),
+    )
+
+    n_tokens_approx = len(user_prompt) // 4
+    print(f"  [2C] prompt: {len(user_prompt):,} chars "
+          f"(~{n_tokens_approx:,} tokens)")
+    t0 = time.time()
+    result, raw = call_llm_json(SECTION_2C_SYSTEM, user_prompt, base_url, model)
+    dt = time.time() - t0
+    print(f"  [2C] LLM returned in {dt:.1f}s")
     if result is None:
         return {"error": "LLM did not return valid JSON", "raw": raw[:2000]}
     return result
@@ -224,8 +466,8 @@ def main():
     ap.add_argument("extraction_json")
     ap.add_argument("--output", default=None,
                     help="Default: semantics.json next to extraction.json")
-    ap.add_argument("--sections", default="2a",
-                    help="Comma-separated list (2a,2b,2c). Default: 2a only.")
+    ap.add_argument("--sections", default="2a,2b,2c",
+                    help="Comma-separated list (2a,2b,2c). Default: full chain.")
     ap.add_argument("--llm-url", default="http://localhost:8000")
     ap.add_argument("--llm-model", default=None,
                     help="Default: auto-discover from /v1/models.")
@@ -262,12 +504,30 @@ def main():
         print(f"  -> wrote {out_path}")
 
     if "2b" in sections:
-        print("\n=== Section 2B: cell roles (not implemented yet) ===")
-        print("  (skipped — ship 2A, validate, then wire 2B)")
+        print("\n=== Section 2B: cell functional roles ===")
+        sem_2a = semantics.get("2a_layers")
+        if not sem_2a or "error" in sem_2a:
+            print("  (skipped — 2A not available or errored)")
+        else:
+            semantics["2b_cells"] = run_section_2b(
+                extraction, sem_2a, args.llm_url, model)
+            with open(out_path, "w") as f:
+                json.dump(semantics, f, indent=2)
+            print(f"  -> wrote {out_path}")
 
     if "2c" in sections:
-        print("\n=== Section 2C: issue candidates (not implemented yet) ===")
-        print("  (skipped — depends on 2A + 2B)")
+        print("\n=== Section 2C: issue-area candidates ===")
+        sem_2a = semantics.get("2a_layers")
+        sem_2b = semantics.get("2b_cells")
+        if (not sem_2a or "error" in sem_2a
+                or not sem_2b or "error" in sem_2b):
+            print("  (skipped — 2A or 2B not available or errored)")
+        else:
+            semantics["2c_candidates"] = run_section_2c(
+                extraction, sem_2a, sem_2b, args.llm_url, model)
+            with open(out_path, "w") as f:
+                json.dump(semantics, f, indent=2)
+            print(f"  -> wrote {out_path}")
 
     print(f"\nDone. Semantics so far: {list(semantics.keys())}")
 
