@@ -131,7 +131,13 @@ with left:
         show_hits=show_hits,
         highlight_bbox=highlight_bbox,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    # Key forces Plotly to rerender when any filter changes
+    plot_key = (
+        f"plot3d-{','.join(sorted(severity_filter))}-{max_hits}-"
+        f"{int(show_cells)}{int(show_hits)}-"
+        f"{','.join(f'{v:.1f}' for v in (highlight_bbox or []))}"
+    )
+    st.plotly_chart(fig, use_container_width=True, key=plot_key)
     st.caption(
         "X/Y in µm. Z is a visual stacking convention based on layer role "
         "(RDL on top, diffusion at bottom) — not real process thickness."
@@ -237,15 +243,23 @@ with right:
         api_msgs.extend(msgs[-8:])
 
         with st.chat_message("assistant"):
+            debug = None
             with st.spinner("Qwen is thinking..."):
                 try:
-                    answer = chat(api_msgs, llm_url, model)
+                    answer, debug = chat(api_msgs, llm_url, model)
                 except Exception as e:
                     answer = f"LLM error: `{e}`"
-            st.markdown(answer or "(empty response)")
+            if answer:
+                st.markdown(answer)
+            else:
+                st.error("Qwen returned no usable content after retry.")
+                if debug:
+                    with st.expander("Debug info", expanded=True):
+                        st.json(debug)
+                answer = "(empty response — see debug info above)"
         st.session_state.messages.append({
             "role": "assistant",
-            "content": answer or "(empty response)",
+            "content": answer,
         })
 
 

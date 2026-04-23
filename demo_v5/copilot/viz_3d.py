@@ -107,7 +107,9 @@ def _wireframe_box(x0, y0, x1, y1, z0, z1, color, name, width=2, opacity=1.0):
         x=xs, y=ys, z=zs, mode="lines",
         line=dict(color=color, width=width),
         opacity=opacity,
-        name=name, hoverinfo="name",
+        name=name,
+        hoverinfo="skip",
+        showlegend=True,
     )
 
 
