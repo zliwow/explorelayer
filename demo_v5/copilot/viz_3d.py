@@ -141,8 +141,11 @@ def build_figure(kb, layer_roles, cell_roles,
         width=3, opacity=0.6,
     ))
 
-    # ── Cell wireframes (colored by 2B role) ───────────────────────────
+    # ── Cell wireframes (one trace per role, not per cell) ────────────
+    # 40+ cells as 40 separate traces created an unusable 40-row legend.
+    # Group them by their 2B role so the legend is ~one row per role.
     if show_cells:
+        cells_by_role = {}
         for c in extraction.get("cells", []):
             if c.get("is_top"):
                 continue
@@ -150,14 +153,43 @@ def build_figure(kb, layer_roles, cell_roles,
             if not bb or len(bb) != 4:
                 continue
             role = cell_roles.get(c["name"], "unknown")
+            cells_by_role.setdefault(role, []).append((c, bb))
+
+        # Draw roles in a stable order: known roles first, unknown last
+        ordered_roles = sorted(
+            cells_by_role.keys(),
+            key=lambda r: (r == "unknown", r == "chip_top", r),
+        )
+        for role in ordered_roles:
             color = ROLE_COLOR.get(role, ROLE_COLOR["unknown"])
-            n_inst = c.get("n_instances", 0)
-            fig.add_trace(_wireframe_box(
-                bb[0], bb[1], bb[2], bb[3], z_min, z_max,
-                color,
-                f"{c['name']} [{role}] x{n_inst}",
-                width=1 if role == "unknown" else 2,
-                opacity=0.5 if role == "unknown" else 0.9,
+            xs, ys, zs, names = [], [], [], []
+            for c, bb in cells_by_role[role]:
+                # Append this cell's 12-edge box, then None to break the line
+                (x0, y0, x1, y1) = bb
+                bx = [x0, x1, x1, x0, x0, None,
+                      x0, x1, x1, x0, x0, None,
+                      x0, x0, None, x1, x1, None,
+                      x1, x1, None, x0, x0, None]
+                by = [y0, y0, y1, y1, y0, None,
+                      y0, y0, y1, y1, y0, None,
+                      y0, y0, None, y0, y0, None,
+                      y1, y1, None, y1, y1, None]
+                bz = [z_min, z_min, z_min, z_min, z_min, None,
+                      z_max, z_max, z_max, z_max, z_max, None,
+                      z_min, z_max, None, z_min, z_max, None,
+                      z_min, z_max, None, z_min, z_max, None]
+                xs.extend(bx); ys.extend(by); zs.extend(bz)
+                names.extend([c["name"]] * len(bx))
+            fig.add_trace(go.Scatter3d(
+                x=xs, y=ys, z=zs, mode="lines",
+                line=dict(
+                    color=color,
+                    width=1 if role == "unknown" else 2,
+                ),
+                opacity=0.35 if role == "unknown" else 0.75,
+                name=f"{role} ({len(cells_by_role[role])})",
+                hoverinfo="skip",
+                showlegend=True,
             ))
 
     # ── Issue hits (markers) ───────────────────────────────────────────
