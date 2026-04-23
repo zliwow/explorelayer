@@ -5,18 +5,23 @@ extractor.py — stage 1 of the v5 pipeline.
 Produces extraction.json from a GDS file. Deterministic, no LLM. Output
 is the contract the stage-2 reasoner consumes.
 
-What we extract:
-  1. chip basics       top cell, die bbox, units, cell count
-  2. layer inventory   per-layer geometry fingerprint + weak heuristic category
-  3. layer-pair overlap    pairwise intersection area for non-fill layers
-  4. cell hierarchy    top-N cells by polygon count, with bboxes + child names
-  5. layer → cell map  which cells each layer appears in (top 20 per layer)
-  6. labels            every text label grouped by layer/cell (if present)
-  7. pad candidates    merged pad-like shapes on every pad-like layer
+What we extract (all generic, no per-chip heuristics):
+  1. chip basics         top cell, die bbox, units, cell count
+  2. layer inventory     per-layer geometry fingerprint + weak geometric category
+  3. layer-pair overlap  pairwise intersection area for non-fill layers
+  4. cell summary        top-N cells by DEEP polygon count (own + descendants
+                         * instance count); own/deep/instances/children/parents
+                         /bbox. No name-pattern hints — stage 2 infers role.
+  5. cell_parents        full reverse map (child cell → parent cells) so stage 2
+                         can chain labels to ancestor blocks.
+  6. layer → cell map    which cells each layer appears in (top 20 per layer)
+  7. labels              per layer/texttype: n_labels, unique_texts, samples
+                         with xy + defining cell.
+  8. pad-like shapes     merged polygons on every weakly-pad-or-top-metal layer
 
-Stage 2 reads this JSON and assigns semantics (RDL? BJT marker? bandgap cell?).
-Stage 1 never guesses at semantics; the weak "category" field in (2) is a
-sanity hint only.
+Stage 2 reads this JSON and assigns semantics (RDL, BJT marker, bandgap cell,
+…) via LLM-with-tools agentic reasoning. Stage 1 never guesses semantics;
+the weak "category" field in (2) is a sanity hint only.
 
 Usage:
     python demo_v5/extractor.py chip.gds
@@ -243,20 +248,37 @@ def layer_cell_map(lib, top_k=20):
 
 # ── Labels ──────────────────────────────────────────────────────────────
 
-def extract_labels(lib, cap_per_layer=100):
+def extract_labels(lib, cap_samples=200, cap_unique=1000):
     """
-    All labels grouped by layer/texttype. Layer names from the foundry
-    (if the GDS carries them) usually live here.
+    Labels grouped by layer/texttype. For each layer we dump:
+      - n_labels, n_unique
+      - unique_texts (up to cap_unique) so the LLM can see every distinct
+        net/node name that exists on this layer
+      - samples (up to cap_samples) with xy + defining cell, so stage 3
+        can do spatial lookups
+
+    The `cell` field is the cell in which the label is DEFINED (gdstk
+    stores labels per-cell). Stage 2 can chain via the `cell_parents`
+    map to find all ancestor cells that transitively contain it.
     """
-    out = defaultdict(list)
+    raw = defaultdict(list)
     for c in lib.cells:
         for lab in c.labels:
-            out[(lab.layer, lab.texttype)].append({
+            raw[(lab.layer, lab.texttype)].append({
                 "text": lab.text,
                 "cell": c.name,
                 "xy": [float(lab.origin[0]), float(lab.origin[1])],
             })
-    return {f"{ldt[0]}/{ldt[1]}": labs[:cap_per_layer] for ldt, labs in out.items()}
+    out = {}
+    for ldt, labs in raw.items():
+        uniq = sorted(set(l["text"] for l in labs))
+        out[f"{ldt[0]}/{ldt[1]}"] = {
+            "n_labels": len(labs),
+            "n_unique": len(uniq),
+            "unique_texts": uniq[:cap_unique],
+            "samples": labs[:cap_samples],
+        }
+    return out
 
 
 # ── Polygon extraction + pad merging ────────────────────────────────────
@@ -371,45 +393,78 @@ def layer_pair_overlaps(cell, layer_infos, max_layers=15, sample=500,
 
 # ── Cell summary ────────────────────────────────────────────────────────
 
+def _count_instances(ref):
+    rep = getattr(ref, "repetition", None)
+    if rep is None:
+        return 1
+    try:
+        off = rep.offsets
+        return len(off) if off is not None else 1
+    except Exception:
+        return 1
+
+
+def compute_deep_polys(lib):
+    """
+    Deep polygon count per cell = own polygons + Σ (child.deep * instances).
+    Recursive with cycle-safe memoization. This surfaces hierarchical
+    design blocks (whose bulk lives in descendants) instead of flattened
+    place-and-route artifacts.
+    """
+    cells_by_name = {c.name: c for c in lib.cells}
+    cache = {}
+
+    def dp(name):
+        if name in cache:
+            return cache[name]
+        c = cells_by_name.get(name)
+        if c is None:
+            return 0
+        cache[name] = 0  # set first to break reference cycles
+        total = len(c.polygons)
+        for ref in c.references:
+            if not isinstance(ref.cell, gdstk.Cell):
+                continue
+            total += _count_instances(ref) * dp(ref.cell.name)
+        cache[name] = total
+        return total
+
+    return {name: dp(name) for name in cells_by_name}
+
+
+def build_parents_map(lib):
+    """child cell name → sorted list of parent cell names."""
+    parents = defaultdict(set)
+    for c in lib.cells:
+        for ref in c.references:
+            if isinstance(ref.cell, gdstk.Cell):
+                parents[ref.cell.name].add(c.name)
+    return {k: sorted(v) for k, v in parents.items()}
+
+
 def cell_summary(lib, top_cell_name, bbox_entries, top_k=40):
     """
-    Top-K cells by polygon count, with bbox (all instances bounded), list
-    of child cell names, and a weak 'role hint' from name pattern.
+    Top-K cells by DEEP polygon count (own + descendants * instances).
+    Returns own_polys, deep_polys, n_instances, children, parents, and
+    an aggregated bbox across all instances. No name-pattern hints —
+    stage 2 LLM infers semantics from labels + geometry + hierarchy.
     """
-    # Polygon counts per cell (own geometry only; not including children)
     own_polys = {c.name: len(c.polygons) for c in lib.cells}
+    deep_polys = compute_deep_polys(lib)
+    parents_map = build_parents_map(lib)
 
-    # Aggregate instance bboxes per cell name
     bbox_by_cell = defaultdict(list)
     for sh, path, _depth in bbox_entries:
         x0, y0, x1, y1 = sh.bounds
         bbox_by_cell[path[-1]].append((x0, y0, x1, y1))
 
-    # Child relationships
     children_by = {}
     for c in lib.cells:
         kids = {ref.cell.name for ref in c.references
                 if isinstance(ref.cell, gdstk.Cell)}
         children_by[c.name] = sorted(kids)
 
-    # Name-based hint (VERY weak — stage 2 LLM supersedes)
-    def name_hint(n):
-        u = n.upper()
-        if any(t in u for t in ("BANDGAP", "BGR", "BG_", "_BG", "VBG", "VREF")):
-            return "bandgap_like_name"
-        if "LDO" in u or "REGULATOR" in u:
-            return "ldo_like_name"
-        if any(t in u for t in ("COMP", "COMPARATOR")):
-            return "comparator_like_name"
-        if "OSC" in u or "VCO" in u:
-            return "oscillator_like_name"
-        if "ESD" in u or "_IO" in u or "IO_" in u:
-            return "io_or_esd_like_name"
-        if "PAD" in u or "BUMP" in u:
-            return "pad_like_name"
-        return None
-
-    ranked = sorted(lib.cells, key=lambda c: -own_polys[c.name])
+    ranked = sorted(lib.cells, key=lambda c: -deep_polys[c.name])
     out = []
     for c in ranked[:top_k]:
         bbs = bbox_by_cell.get(c.name, [])
@@ -417,17 +472,21 @@ def cell_summary(lib, top_cell_name, bbox_entries, top_k=40):
         if bbs:
             agg_bb = [min(b[0] for b in bbs), min(b[1] for b in bbs),
                       max(b[2] for b in bbs), max(b[3] for b in bbs)]
+        kids = children_by[c.name]
+        pars = parents_map.get(c.name, [])
         out.append({
             "name": c.name,
             "own_polys": own_polys[c.name],
+            "deep_polys": deep_polys[c.name],
             "n_instances": len(bbs),
-            "children": children_by[c.name][:15],
-            "n_children": len(children_by[c.name]),
+            "children": kids[:15],
+            "n_children": len(kids),
+            "parents": pars[:10],
+            "n_parents": len(pars),
             "bbox_any_instance": agg_bb,
-            "name_hint": name_hint(c.name),
             "is_top": (c.name == top_cell_name),
         })
-    return out
+    return out, parents_map
 
 
 # ── Main ────────────────────────────────────────────────────────────────
@@ -511,9 +570,10 @@ def main():
                                 sample=args.sample)
     print(f"      {len(pairs)} overlapping layer pairs  {time.time()-t0:.1f}s")
 
-    print(f"[6/6] Summarizing top {args.top_cells} cells ...")
+    print(f"[6/6] Summarizing top {args.top_cells} cells (by deep polygon count) ...")
     t0 = time.time()
-    cells = cell_summary(lib, cell.name, bbox_entries, top_k=args.top_cells)
+    cells, parents_map = cell_summary(lib, cell.name, bbox_entries,
+                                      top_k=args.top_cells)
     print(f"      done in {time.time()-t0:.1f}s")
 
     # Pad-like shapes on every pad-like layer (stage 2 decides which is "the" pad)
@@ -527,7 +587,7 @@ def main():
             pad_shapes_by_layer[f"{li['ldt'][0]}/{li['ldt'][1]}"] = merged
 
     data = {
-        "schema_version": 1,
+        "schema_version": 2,
         "gds_file": os.path.basename(args.gds_file),
         "gds_file_path": os.path.abspath(args.gds_file),
         "elapsed_s": round(time.time() - t_start, 2),
@@ -554,6 +614,7 @@ def main():
         "labels_by_layer": labels,
         "layer_pair_overlaps": pairs,
         "cells": cells,
+        "cell_parents": parents_map,
         "pad_shapes_by_layer": pad_shapes_by_layer,
     }
 

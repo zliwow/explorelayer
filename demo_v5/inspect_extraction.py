@@ -93,39 +93,43 @@ def main():
               f"{p['a_pct']:>6.1f}%  {p['b_pct']:>6.1f}%  {p.get('note','')}")
     print()
 
-    # ── cells with semantic hints ──────────────────────────────────────
+    # ── cells (ranked by deep polygon count) ───────────────────────────
     cells = d.get("cells", [])
-    hinted = [c for c in cells if c.get("name_hint")]
-    print(f"-- cells with name hint ({len(hinted)} of {len(cells)} dumped) --")
-    if hinted:
-        print(f"  {'name':40s}  {'hint':28s}  {'own':>6s}  {'inst':>5s}  children")
-        for c in hinted[:args.top]:
-            kids = ",".join(c.get("children", [])[:4])
-            if len(c.get("children", [])) > 4:
-                kids += f",… (+{len(c['children']) - 4})"
-            print(f"  {c['name'][:40]:40s}  {c['name_hint']:28s}  "
-                  f"{c['own_polys']:>6,}  {c['n_instances']:>5d}  {kids}")
-    else:
-        print("  (none — real chip may need tuning of name_hint patterns)")
-    print()
-
-    # ── top cells by own polygons ──────────────────────────────────────
-    print(f"-- top {args.top} cells by own polygons --")
-    print(f"  {'name':40s}  {'own':>8s}  {'inst':>5s}  {'kids':>5s}  top hint")
+    print(f"-- top {args.top} cells by DEEP polygon count "
+          f"(own + descendants * instances) --")
+    print(f"  {'name':40s}  {'deep':>12s}  {'own':>10s}  "
+          f"{'inst':>5s}  {'kids':>5s}  {'par':>4s}  children (first 4)")
     for c in cells[:args.top]:
-        print(f"  {c['name'][:40]:40s}  {c['own_polys']:>8,}  "
-              f"{c['n_instances']:>5d}  {c['n_children']:>5d}  "
-              f"{c.get('name_hint') or ''}")
+        kids = ",".join(c.get("children", [])[:4])
+        if len(c.get("children", [])) > 4:
+            kids += f",… (+{len(c['children']) - 4})"
+        print(f"  {c['name'][:40]:40s}  "
+              f"{c.get('deep_polys', 0):>12,}  "
+              f"{c['own_polys']:>10,}  "
+              f"{c['n_instances']:>5d}  "
+              f"{c['n_children']:>5d}  "
+              f"{c.get('n_parents', 0):>4d}  "
+              f"{kids}")
     print()
 
     # ── labels ──────────────────────────────────────────────────────────
     labels = d.get("labels_by_layer", {})
-    n_labels = sum(len(v) for v in labels.values())
-    print(f"-- labels ({n_labels} total across {len(labels)} layer/texttype pairs) --")
-    for layer_id, labs in labels.items():
-        print(f"  layer {layer_id}:  {len(labs)} labels")
-        samples = [l["text"] for l in labs[:20]]
-        print(f"    sample: {samples}")
+    n_labels = sum(v.get("n_labels", 0) for v in labels.values())
+    n_unique = sum(v.get("n_unique", 0) for v in labels.values())
+    print(f"-- labels ({n_labels} total / {n_unique} unique across "
+          f"{len(labels)} layer/texttype pairs) --")
+    for layer_id, info in labels.items():
+        n = info.get("n_labels", 0)
+        u = info.get("n_unique", 0)
+        uniq_preview = info.get("unique_texts", [])[:20]
+        print(f"  layer {layer_id}:  {n} labels, {u} unique")
+        print(f"    unique sample: {uniq_preview}")
+    print()
+
+    # ── cell_parents (reverse map sanity check) ────────────────────────
+    parents = d.get("cell_parents", {})
+    print(f"-- cell_parents: reverse child→parent map, "
+          f"{len(parents)} cells have parents --")
     print()
 
     # ── pad-like shape counts per layer ────────────────────────────────
