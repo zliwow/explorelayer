@@ -130,6 +130,15 @@ def extract_json_block(text):
 
 def call_llm_json(system_prompt, user_prompt, base_url, model, **kw):
     raw = call_llm(system_prompt, user_prompt, base_url, model, **kw)
+    # Empty content sometimes happens when response_format=json_object conflicts
+    # with Qwen3 thinking mode for a given prompt — retry once without the
+    # grammar constraint before giving up.
+    if not raw.strip() and kw.get("force_json", True):
+        print("  !! empty response with force_json=True — retrying without "
+              "response_format", file=sys.stderr)
+        kw_retry = dict(kw)
+        kw_retry["force_json"] = False
+        raw = call_llm(system_prompt, user_prompt, base_url, model, **kw_retry)
     body = extract_json_block(raw)
     try:
         return json.loads(body), raw
@@ -252,19 +261,21 @@ def run_section_2a(extraction, base_url, model):
 
 # ── Section 2B: cell functional roles ───────────────────────────────────
 
-SECTION_2B_SYSTEM = """You are an IC block-level functional classifier. You read cell hierarchy and layer context and identify the functional role of each top-level block.
+SECTION_2B_SYSTEM = """You are an IC block-level functional classifier. You read cell hierarchy and layer context and identify the functional role of each cell you are asked about.
 
-Roles to consider: bandgap_reference, LDO, comparator, oscillator, buck_converter, boost_converter, charge_pump, digital, memory, io_pad, esd, bias_generator, reference, analog_mux, matched_pair_cell, level_shifter, opamp, power_switch, unknown.
+Roles to consider: bandgap_reference, LDO, comparator, oscillator, buck_converter, boost_converter, charge_pump, digital, memory, io_pad, esd, bias_generator, reference, analog_mux, matched_pair_cell, level_shifter, opamp, power_switch, chip_top, unknown.
 
 Rules:
-- Reason from EVIDENCE: cell name tokens (BG/BANDGAP/VBG → bandgap; LDO/VREG → LDO; OSC/VCO → oscillator; BUCK/SW → buck; CMP/COMP → comparator; DIG/LOGIC → digital; PAD/IO → I/O; ESD → ESD), children names, n_instances (≥2 with same child → matched pair), deep polygon count (big analog blocks are 10k-100k polys; digital is often 100k+; small cells <1k polys are leaf devices).
+- You MUST classify EVERY cell provided in the input list — do not skip, do not collapse, do not output only the chip's top cell. If the list has 40 entries you return 40 classifications.
+- The chip's root/wrapper cell (is_top=true) is almost always 'chip_top', not 'unknown'. Non-top cells should be classified by their actual function.
+- Reason from EVIDENCE: cell name tokens (BG/BANDGAP/VBG → bandgap_reference; LDO/VREG → LDO; OSC/VCO → oscillator; BUCK/SW → buck_converter; CMP/COMP → comparator; DIG/LOGIC → digital; PAD/IO → io_pad; ESD → esd), children names, n_instances (≥2 with same child → matched_pair_cell), deep polygon count (big analog blocks are 10k-100k polys; digital is often 100k+; small cells <1k polys are leaf devices).
 - Tokens are strong evidence but not definitive — weigh them against children and n_instances.
 - Section 2A output gives you which layers are RDL/BJT_marker/diff/poly — use that to interpret children.
-- If unsure, set role='unknown' and say so — do NOT guess.
+- If unsure for a specific cell, set role='unknown' for that one cell — do NOT apply 'unknown' to the whole chip.
 - Output MUST be a single JSON object, no prose before or after, no markdown fences.
 """
 
-SECTION_2B_USER_TEMPLATE = """Classify the functional role of each top cell in this GDS.
+SECTION_2B_USER_TEMPLATE = """Classify each of the {n_cells} cells provided below. Return one classification per cell, in the same order.
 
 # CHIP
 {chip}
@@ -272,7 +283,7 @@ SECTION_2B_USER_TEMPLATE = """Classify the functional role of each top cell in t
 # SECTION 2A LAYER SEMANTICS (for context)
 {semantics_2a}
 
-# TOP CELLS (ranked by deep polygon count)
+# CELLS TO CLASSIFY (ranked by deep polygon count) — classify ALL {n_cells}
 {cells}
 
 Respond with a single JSON object in this exact shape:
@@ -329,6 +340,7 @@ def build_2b_input(extraction, semantics_2a):
 def run_section_2b(extraction, semantics_2a, base_url, model):
     chip, cells, slim_2a = build_2b_input(extraction, semantics_2a)
     user_prompt = SECTION_2B_USER_TEMPLATE.format(
+        n_cells=len(cells),
         chip=json.dumps(chip, indent=2),
         semantics_2a=json.dumps(slim_2a, indent=2),
         cells=json.dumps(cells, indent=2),
