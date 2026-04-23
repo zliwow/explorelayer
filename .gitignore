@@ -1,1 +1,3 @@
 __pycache__/
+demo_v5/extraction*.json
+demo_v5/inspection*.txt
