@@ -75,16 +75,15 @@ semantics = kb.get("semantics") or {}
 summary = issues.get("summary", {})
 
 
-# ── Sidebar filters ────────────────────────────────────────────────────
-st.sidebar.header("View filters")
-severity_filter = st.sidebar.multiselect(
-    "Severity",
-    ["critical", "high", "medium", "low"],
-    default=[s for s in ["critical", "high"] if summary.get(s, 0) > 0] or ["critical", "high"],
-)
-max_hits = st.sidebar.slider("Max hits to render", 50, 2000, 500, 50)
-show_cells = st.sidebar.checkbox("Show cell boxes", value=True)
-show_hits = st.sidebar.checkbox("Show hit markers", value=True)
+# ── View config (fixed — no interactive filters) ──────────────────────
+# Keep the 3D view deterministic so the chart reliably reflects the full
+# knowledge base. Severity filter, max-hits cap, and layer toggles were
+# dropped because they encouraged "why didn't it update?" confusion
+# without adding review value.
+severity_filter = ["critical", "high", "medium", "low"]
+max_hits = 5000
+show_cells = True
+show_hits = True
 
 st.sidebar.header("LLM")
 llm_url = st.sidebar.text_input("Qwen URL", "http://localhost:8000")
@@ -131,11 +130,10 @@ with left:
         show_hits=show_hits,
         highlight_bbox=highlight_bbox,
     )
-    # Key forces Plotly to rerender when any filter changes
-    plot_key = (
-        f"plot3d-{','.join(sorted(severity_filter))}-{max_hits}-"
-        f"{int(show_cells)}{int(show_hits)}-"
-        f"{','.join(f'{v:.1f}' for v in (highlight_bbox or []))}"
+    # Plotly key only changes when the highlighted hit changes, so the
+    # base figure stays cached across unrelated reruns (chat turns, etc.)
+    plot_key = "plot3d-" + ",".join(
+        f"{v:.1f}" for v in (highlight_bbox or [0, 0, 0, 0])
     )
     st.plotly_chart(fig, use_container_width=True, key=plot_key)
     st.caption(
@@ -145,8 +143,8 @@ with left:
 
     # ── Hits table ─────────────────────────────────────────────────────
     all_hits = issues.get("hits", [])
-    filt_hits = [h for h in all_hits if h.get("severity") in severity_filter]
-    st.subheader(f"Hits ({len(filt_hits)}/{len(all_hits)} shown)")
+    filt_hits = all_hits
+    st.subheader(f"Hits ({len(filt_hits)})")
     if filt_hits:
         df = pd.DataFrame([{
             "sev": h.get("severity"),
