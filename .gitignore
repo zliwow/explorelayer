@@ -1,3 +1,7 @@
 __pycache__/
 demo_v5/extraction*.json
 demo_v5/inspection*.txt
+demo_v5/semantics*.json
+demo_v5/issues*.json
+demo_v5/NOTES.md
+demo_v5/copilot/NOTES.md
